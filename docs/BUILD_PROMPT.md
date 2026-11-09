@@ -27,7 +27,7 @@ M0  [DONE 2026-11-09] Scaffold: npm + TS strict + vitest, config loader
     (yaml + .env), structured logger that redacts secrets, SQLite state.
     Verify: `npm run check` passes and `npm start -- --mode dry-run` boots
     and exits cleanly.
-M1  Address extraction + X watcher. Unit-test extraction against fixtures
+M1  [DONE 2026-11-09] Address extraction + X watcher. Unit-test extraction against fixtures
     (plain address, pump.fun URL, dexscreener URL, t.co link, address in an
     image, a "this is FAKE" warning post, a reply carrying a different
     address). Verify: tests pass, and the watcher logs a post from my test

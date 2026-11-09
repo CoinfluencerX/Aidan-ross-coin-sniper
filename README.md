@@ -2,7 +2,7 @@
 
 A Solana sniper that buys the coin Adin Ross and FaZe Banks have talked about launching for their GTA 6 roleplay server. It buys **the moment the contract address is posted from one of their official accounts**, then sells on preset % gain rules.
 
-> **Status:** M0 done (scaffold, config, redacting logger, SQLite state, dry-run boot). No watchers or trading yet. GTA 6 releases **Nov 19, 2026**. Target: launch-ready by **Nov 17**.
+> **Status:** M0 and M1 done. M1 is address extraction plus the X watcher, verified live on Nov 9: a test post was caught on both X delivery paths, about 4.7 s after posting. No validator or trading yet, and Kick and Twitch watchers are still to come. GTA 6 releases **Nov 19, 2026**. Target: launch-ready by **Nov 17**.
 
 ## Quick start
 
@@ -14,7 +14,10 @@ git config core.hooksPath scripts/git-hooks   # once per clone: blocks secret co
 cp .env.example .env && chmod 600 .env        # then fill it in yourself
 npm run check                 # typecheck + tests
 npm start -- --mode dry-run   # boots, validates config, writes data/dry-run.sqlite, exits
+npm start -- --watch --duration 600   # dry-run X watcher for 10 minutes (omit --duration to run until Ctrl-C)
 ```
+
+The watcher needs `X_BEARER_TOKEN` in `.env`. It reads addresses in images only when `tesseract` is installed (`brew install tesseract`); without it, images are checked by alt text alone. It never buys anything: it logs each post from a watched account and prints an alert when one carries an address.
 
 ### Secrets (this repo is public)
 

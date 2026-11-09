@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs, parseEnv as parseDotenv } from "node:util";
@@ -8,7 +9,20 @@ import { liveReadinessProblems, PUSH_PLATFORMS, type AccountsConfig, type Platfo
 import { createLogger, type Logger } from "../log/logger.ts";
 import { createRedactor } from "../log/redact.ts";
 import { audit } from "../state/audit.ts";
-import { openDb, SCHEMA_VERSION } from "../state/db.ts";
+import { openDb, SCHEMA_VERSION, type Db } from "../state/db.ts";
+import { formatAlert } from "../alert/console.ts";
+import type { FetchFn } from "../extract/expand.ts";
+import { tesseractOcr, type OcrEngine } from "../extract/ocr.ts";
+import type { XPath } from "../watch/signal.ts";
+import { XApiError, XClient } from "../watch/x/client.ts";
+import {
+  buildWatchList,
+  ensureActivitySubscriptions,
+  ensureStreamRule,
+  verifyWatchList,
+  WatchConfigError,
+  XWatcher,
+} from "../watch/x/watcher.ts";
 
 export const EXIT = { OK: 0, CONFIG: 1, MODE: 2, USAGE: 64, FATAL: 70 } as const;
 
@@ -32,14 +46,24 @@ export interface MainOptions {
   write?: (line: string) => void;
   /** Test hook only. Production always uses LIVE_TRADING_AVAILABLE. */
   liveAvailable?: boolean;
+  /** Network for the watcher (X API, link expansion, image download). Defaults to global fetch. */
+  fetch?: FetchFn;
+  /** OCR engine. Defaults to the local tesseract binary when it's installed. Pass null to disable. */
+  ocr?: OcrEngine | null;
+  /** Where the human-readable alert banners go. Defaults to stderr, so stdout stays JSON lines. */
+  alert?: (text: string) => void;
+  /** Stops the watcher (Ctrl-C). */
+  signal?: AbortSignal;
 }
 
-const USAGE = `Usage: npm start -- [--mode dry-run|live] [--config-dir config] [--data-dir data] [--env-file .env]
+const USAGE = `Usage: npm start -- [--mode dry-run|live] [--watch [--duration <seconds>]] [--config-dir config] [--data-dir data] [--env-file .env]
 
   --mode        dry-run (default) or live. Live also needs MODE=live and LIVE=1 in .env.
   --config-dir  folder with accounts.yaml, guardrails.yaml, validator.yaml
   --data-dir    folder for the SQLite state (one file per mode). Overrides DATA_DIR.
-  --env-file    env file to load (default .env, optional). Real environment variables win.`;
+  --env-file    env file to load (default .env, optional). Real environment variables win.
+  --watch       start the X watcher (Activity API + Filtered Stream). Needs X_BEARER_TOKEN.
+  --duration    with --watch: stop after this many seconds (default: run until Ctrl-C).`;
 
 export async function main(opts: MainOptions): Promise<number> {
   const write = opts.write ?? ((line: string) => process.stdout.write(line + "\n"));
@@ -61,6 +85,15 @@ export async function main(opts: MainOptions): Promise<number> {
     return EXIT.USAGE;
   }
   const cliMode: Mode | undefined = args.mode;
+  let durationMs: number | undefined;
+  if (args.duration !== undefined) {
+    const n = Number(args.duration);
+    if (!args.watch || !Number.isFinite(n) || n <= 0) {
+      createLogger({ write }).error("usage.invalid", { error: "--duration needs --watch and a positive number of seconds" });
+      return EXIT.USAGE;
+    }
+    durationMs = n * 1000;
+  }
 
   // 2. Environment. Collect secrets from the RAW values first, so even invalid ones are redacted.
   const envFile = resolve(opts.cwd, args["env-file"] ?? ".env");
@@ -86,21 +119,22 @@ export async function main(opts: MainOptions): Promise<number> {
   log.debug("env.loaded", { env });
 
   try {
-    return run(log, env, cliMode, args, opts, existsSync(envFile) ? envFile : null);
+    return await run(log, env, cliMode, args, opts, existsSync(envFile) ? envFile : null, durationMs);
   } catch (err) {
     log.error("fatal", { error: err });
     return EXIT.FATAL;
   }
 }
 
-function run(
+async function run(
   log: Logger,
   env: AppEnv,
   cliMode: Mode | undefined,
   args: ReturnType<typeof parseCli>,
   opts: MainOptions,
   envFile: string | null,
-): number {
+  durationMs: number | undefined,
+): Promise<number> {
   // 3. Mode gate.
   let mode: Mode;
   try {
@@ -163,14 +197,115 @@ function run(
     audit(db, log.redactor, "boot", { mode, schema_version: SCHEMA_VERSION, accounts });
     log.info("boot.complete", { mode, db_path: dbPath, schema_version: SCHEMA_VERSION });
 
-    // 7. Components. Watchers arrive in M1, the validator in M2, the executor in M3.
-    log.info("boot.idle", { note: "No watchers yet (M0). Exiting cleanly." });
-    audit(db, log.redactor, "shutdown", { mode, reason: "m0_no_components" });
+    // 7. Components. The validator arrives in M2, the executor in M3.
+    if (!args.watch) {
+      log.info("boot.idle", { note: "No --watch given. Exiting cleanly." });
+      audit(db, log.redactor, "shutdown", { mode, reason: "no_watch" });
+      log.info("shutdown", { exit_code: EXIT.OK });
+      return EXIT.OK;
+    }
+    const code = await watch(log, env, mode, config, db, opts, durationMs);
+    log.info("shutdown", { exit_code: code });
+    return code;
   } finally {
     db.close();
   }
-  log.info("shutdown", { exit_code: EXIT.OK });
-  return EXIT.OK;
+}
+
+function defaultOcr(log: Logger): OcrEngine | undefined {
+  const probe = spawnSync("tesseract", ["--version"], { encoding: "utf8", timeout: 3_000 });
+  if (probe.status === 0) {
+    log.info("ocr.ready", { engine: "tesseract", version: probe.stdout.split("\n")[0] });
+    return tesseractOcr();
+  }
+  log.warn("ocr.unavailable", { note: "tesseract not on PATH: images are checked by alt text only" });
+  return undefined;
+}
+
+async function watch(
+  log: Logger,
+  env: AppEnv,
+  mode: Mode,
+  config: AppConfig,
+  db: Db,
+  opts: MainOptions,
+  durationMs: number | undefined,
+): Promise<number> {
+  if (!env.X_BEARER_TOKEN) {
+    log.error("watch.no_x_token", { note: "--watch needs X_BEARER_TOKEN in .env" });
+    audit(db, log.redactor, "shutdown", { mode, reason: "no_x_token" });
+    return EXIT.CONFIG;
+  }
+  const client = new XClient({ bearerToken: env.X_BEARER_TOKEN, ...(opts.fetch ? { fetch: opts.fetch } : {}) });
+
+  let watchList;
+  try {
+    watchList = buildWatchList(config.accounts, mode);
+    await verifyWatchList(client, watchList, log);
+  } catch (err) {
+    const known = err instanceof WatchConfigError || err instanceof XApiError;
+    log.error("watch.accounts_invalid", { error: (err as Error).message });
+    audit(db, log.redactor, "shutdown", { mode, reason: "accounts_invalid" });
+    if (known) return EXIT.CONFIG;
+    throw err;
+  }
+
+  // Set up each path. A path whose endpoint the plan doesn't include is dropped, not fatal,
+  // as long as one path remains.
+  const paths: XPath[] = [];
+  const setups: [XPath, () => Promise<unknown>][] = [
+    ["activity", () => ensureActivitySubscriptions(client, watchList, log)],
+    ["filtered_stream", () => ensureStreamRule(client, watchList, log)],
+  ];
+  for (const [path, setup] of setups) {
+    try {
+      await setup();
+      paths.push(path);
+    } catch (err) {
+      log.warn("watch.path_unavailable", { path, error: (err as Error).message });
+    }
+  }
+  if (paths.length === 0) {
+    log.error("watch.no_paths", { note: "Neither the Activity API nor Filtered Stream could be set up. Check the X plan and token." });
+    audit(db, log.redactor, "shutdown", { mode, reason: "no_paths" });
+    return EXIT.CONFIG;
+  }
+
+  const ocr = opts.ocr === null ? undefined : (opts.ocr ?? defaultOcr(log));
+  const alert = opts.alert ?? ((text: string) => process.stderr.write(text + "\n"));
+  const color = opts.alert ? false : Boolean(process.stderr.isTTY) || process.env.FORCE_COLOR !== undefined;
+  const watcher = new XWatcher({
+    client,
+    accounts: config.accounts,
+    validator: config.validator,
+    watchList,
+    db,
+    log,
+    mode,
+    ocr,
+    fetch: opts.fetch,
+    paths,
+    onSignal: (s, a) => alert(formatAlert(s, a, { color, mode, now: Date.now() })),
+  });
+
+  const stops = [opts.signal, durationMs !== undefined ? AbortSignal.timeout(durationMs) : undefined].filter(
+    (s): s is AbortSignal => s !== undefined,
+  );
+  const stop = stops.length ? AbortSignal.any(stops) : new AbortController().signal;
+  log.info("watch.started", {
+    mode,
+    paths,
+    duration_s: durationMs !== undefined ? durationMs / 1000 : null,
+    ocr: Boolean(ocr),
+    accounts: watchList.map((a) => ({ handle: a.handle, user_id: a.userId, tier: a.tier, test: a.isTest })),
+  });
+  audit(db, log.redactor, "watch.started", { mode, paths, accounts: watchList });
+
+  const { failedPaths } = await watcher.run(stop);
+  const everyPathFailed = failedPaths.length === paths.length && !stop.aborted;
+  log.info("watch.stopped", { stats: watcher.stats, failed_paths: failedPaths });
+  audit(db, log.redactor, "shutdown", { mode, reason: everyPathFailed ? "all_paths_failed" : "stopped", stats: watcher.stats });
+  return everyPathFailed ? EXIT.FATAL : EXIT.OK;
 }
 
 function parseCli(argv: readonly string[]) {
@@ -181,6 +316,8 @@ function parseCli(argv: readonly string[]) {
       "config-dir": { type: "string" },
       "data-dir": { type: "string" },
       "env-file": { type: "string" },
+      watch: { type: "boolean" },
+      duration: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
     strict: true,

@@ -84,4 +84,6 @@ blocked_mints:
 
 # Dry-run only: your own test account. Leave empty in live mode.
 test_accounts:
-  x: []   # for the M5 dry run, e.g. - { handle: yourtesthandle, user_id: "1234567890" }
+  x:
+    # Owner's test account. Looked up 2026-11-09 with scripts/x-lookup-user.ts (GET /2/users/by).
+    - { handle: Franklin_ETH1, user_id: "1891923819520196610" }

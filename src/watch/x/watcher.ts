@@ -1,0 +1,254 @@
+import type { Mode } from "../../config/mode.ts";
+import type { AccountsConfig, ValidatorConfig } from "../../config/schemas.ts";
+import type { FetchFn } from "../../extract/expand.ts";
+import { extractFromPost } from "../../extract/extract.ts";
+import type { OcrEngine } from "../../extract/ocr.ts";
+import type { Logger } from "../../log/logger.ts";
+import { audit } from "../../state/audit.ts";
+import type { Db } from "../../state/db.ts";
+import { assessSignal, buildSignals, recordSignal, type AddressSignal, type Assessment, type WatchedAccount, type XPath } from "../signal.ts";
+import { POST_QUERY, XApiError, type XClient } from "./client.ts";
+import { fromActivityEvent, fromFilteredStream, normalizeTweet, type XPost } from "./normalize.ts";
+import { runStreamLoop } from "./stream.ts";
+
+export const RULE_TAG = "gta6-sniper";
+
+export class WatchConfigError extends Error {
+  override name = "WatchConfigError";
+}
+
+/** Every X account to watch. Test accounts are included in dry-run only. */
+export function buildWatchList(accounts: AccountsConfig, mode: Mode): WatchedAccount[] {
+  const out: WatchedAccount[] = [];
+  for (const [person, p] of Object.entries(accounts.people)) {
+    for (const a of p.x) out.push({ userId: a.user_id, handle: a.handle, person, tier: a.tier, isTest: false });
+  }
+  if (mode === "dry-run") {
+    for (const a of accounts.test_accounts.x) out.push({ userId: a.user_id, handle: a.handle, person: "test", tier: 1, isTest: true });
+  }
+  const ids = new Set<string>();
+  for (const a of out) {
+    if (ids.has(a.userId)) throw new WatchConfigError(`X user_id ${a.userId} (@${a.handle}) is listed twice`);
+    ids.add(a.userId);
+  }
+  return out;
+}
+
+/**
+ * Re-resolves every handle through the X API and refuses to start if one now points at a
+ * different numeric ID (renamed / squatted handle) or no longer exists. IDs stay the source of truth.
+ */
+export async function verifyWatchList(client: XClient, list: readonly WatchedAccount[], log: Logger): Promise<void> {
+  const { users, errors } = await client.lookupUsers(list.map((a) => a.handle));
+  const byHandle = new Map(users.map((u) => [u.username.toLowerCase(), u]));
+  const problems: string[] = [];
+  for (const a of list) {
+    const u = byHandle.get(a.handle.toLowerCase());
+    if (!u) problems.push(`@${a.handle} was not found on X`);
+    else if (u.id !== a.userId) problems.push(`@${a.handle} now resolves to id ${u.id}, config says ${a.userId}`);
+    else if (u.protected) log.warn("x.account.protected", { handle: a.handle, note: "protected accounts' posts are not delivered" });
+  }
+  if (problems.length) throw new WatchConfigError(`accounts.yaml doesn't match X: ${problems.join("; ")}`);
+  if (errors.length) log.warn("x.lookup.partial_errors", { errors });
+  log.info("x.accounts.verified", { count: list.length, handles: list.map((a) => a.handle) });
+}
+
+/** Creates post.create subscriptions for any watched ID that doesn't have one. Safe to re-run. */
+export async function ensureActivitySubscriptions(client: XClient, list: readonly WatchedAccount[], log: Logger) {
+  const existing = await client.listActivitySubscriptions();
+  const have = new Set(existing.filter((s) => s.event_type === "post.create").map((s) => s.filter.user_id));
+  const created: string[] = [];
+  for (const a of list) {
+    if (have.has(a.userId)) continue;
+    try {
+      await client.createActivitySubscription(a.userId, `${RULE_TAG}:${a.handle}`);
+      created.push(a.handle);
+    } catch (err) {
+      // A concurrent create can race us into DuplicateSubscription. That's fine.
+      if (err instanceof XApiError && /duplicate/i.test(err.body)) continue;
+      throw err;
+    }
+  }
+  log.info("x.activity.subscriptions", { existing: have.size, created });
+  return { created };
+}
+
+export function streamRuleValue(list: readonly WatchedAccount[]): string {
+  return list.map((a) => `from:${a.userId}`).join(" OR ");
+}
+
+/** Keeps exactly one Filtered Stream rule with our tag, matching the current watch list. */
+export async function ensureStreamRule(client: XClient, list: readonly WatchedAccount[], log: Logger) {
+  const value = streamRuleValue(list);
+  const rules = await client.getStreamRules();
+  const ours = rules.filter((r) => r.tag === RULE_TAG);
+  if (ours.length === 1 && ours[0]!.value === value) {
+    log.info("x.filtered_stream.rule", { status: "unchanged", value });
+    return;
+  }
+  await client.deleteStreamRules(ours.map((r) => r.id));
+  await client.addStreamRule(value, RULE_TAG);
+  log.info("x.filtered_stream.rule", { status: ours.length ? "replaced" : "created", value });
+}
+
+export interface XWatcherOptions {
+  client: XClient;
+  accounts: AccountsConfig;
+  validator: ValidatorConfig;
+  watchList: readonly WatchedAccount[];
+  db: Db;
+  log: Logger;
+  mode: Mode;
+  ocr?: OcrEngine | undefined;
+  fetch?: FetchFn | undefined;
+  onSignal: (s: AddressSignal, a: Assessment) => void;
+  paths?: readonly XPath[];
+  stallMs?: number;
+}
+
+export class XWatcher {
+  readonly #o: XWatcherOptions;
+  readonly #byId: Map<string, WatchedAccount>;
+  readonly #seenPosts = new Set<string>();
+  readonly #pending = new Set<Promise<void>>();
+  stats = { events: 0, posts: 0, ignoredAuthors: 0, duplicates: 0, signals: 0 };
+
+  constructor(o: XWatcherOptions) {
+    this.#o = o;
+    this.#byId = new Map(o.watchList.map((a) => [a.userId, a]));
+  }
+
+  /** Runs every enabled path until `signal` aborts or every path fails for good. Returns the paths that failed. */
+  async run(signal: AbortSignal): Promise<{ failedPaths: XPath[] }> {
+    const paths = this.#o.paths ?? (["activity", "filtered_stream"] as const);
+    const failed: XPath[] = [];
+    const allFailed = new AbortController();
+    const inner = AbortSignal.any([signal, allFailed.signal]);
+    const loop = (path: XPath) =>
+      runStreamLoop({
+        name: path,
+        signal: inner,
+        log: this.#o.log,
+        ...(this.#o.stallMs !== undefined ? { stallMs: this.#o.stallMs } : {}),
+        open: (s) =>
+          path === "activity"
+            ? this.#o.client.openStream("/2/activity/stream", {}, s)
+            : this.#o.client.openStream("/2/tweets/search/stream", POST_QUERY, s),
+        onMessage: (msg, at) => this.#onMessage(path, msg, at),
+        onFatal: () => {
+          failed.push(path);
+          if (failed.length === paths.length) allFailed.abort();
+        },
+      });
+    await Promise.all(paths.map(loop));
+    await this.drain();
+    return { failedPaths: failed };
+  }
+
+  /** Waits for posts still being processed (OCR, link expansion). */
+  async drain(): Promise<void> {
+    while (this.#pending.size) await Promise.all([...this.#pending]);
+  }
+
+  #onMessage(path: XPath, msg: unknown, receivedAt: number): void {
+    this.stats.events++;
+    let post: XPost | null;
+    if (path === "activity") {
+      const e = fromActivityEvent(msg);
+      post = e.post;
+      if (!post) {
+        this.#o.log.debug("x.activity.event_skipped", { event_type: e.eventType });
+        return;
+      }
+    } else {
+      post = fromFilteredStream(msg);
+      if (!post) return;
+    }
+    const p = this.handlePost(post, path, receivedAt).then(
+      () => undefined,
+      (err) => this.#o.log.error("x.post.failed", { post_id: post.id, error: err }),
+    );
+    this.#pending.add(p);
+    void p.finally(() => this.#pending.delete(p));
+  }
+
+  /** Core path for one post from either stream. Public for tests. */
+  async handlePost(post: XPost, path: XPath, receivedAt: number): Promise<AddressSignal[]> {
+    const { log, accounts, db } = this.#o;
+    const account = this.#byId.get(post.authorId);
+    if (!account) {
+      // The one rule: only allowlisted numeric IDs. Never a handle or display name.
+      this.stats.ignoredAuthors++;
+      log.info("x.post.ignored_author", { path, post_id: post.id, author_id: post.authorId });
+      return [];
+    }
+    if (this.#seenPosts.has(post.id)) {
+      this.stats.duplicates++;
+      log.debug("x.post.duplicate", { path, post_id: post.id });
+      return [];
+    }
+    this.#seenPosts.add(post.id);
+    this.stats.posts++;
+
+    let full = post;
+    if (post.mediaMissing) {
+      try {
+        const r = await this.#o.client.getPost(post.id);
+        if (r.data) full = normalizeTweet(r.data, r.includes) ?? post;
+      } catch (err) {
+        log.warn("x.post.hydrate_failed", { post_id: post.id, error: (err as Error).message });
+      }
+    }
+
+    const extraction = await extractFromPost(full.content, {
+      warningKeywords: this.#o.validator.params.warning_keywords,
+      ocr: this.#o.ocr,
+      fetch: this.#o.fetch,
+    });
+
+    const postUrl = `https://x.com/${account.handle}/status/${post.id}`;
+    log.info("x.post", {
+      path,
+      post_id: post.id,
+      url: postUrl,
+      handle: account.handle,
+      test_account: account.isTest,
+      kind: full.kind,
+      text: full.content.text,
+      links: full.content.urls.length,
+      images: full.content.images.length,
+      mints: extraction.mints.map((m) => m.mint),
+      ignored: extraction.ignored,
+      warning_keywords: extraction.warning.keywords,
+      ocr: extraction.ocr,
+      lag_ms: full.createdAt ? receivedAt - Date.parse(full.createdAt) : null,
+    });
+    audit(db, log.redactor, "x.post", { path, post_id: post.id, account, kind: full.kind, extraction });
+
+    const signals = buildSignals(
+      {
+        source: "x",
+        path,
+        postId: post.id,
+        postUrl,
+        accountId: account.userId,
+        account,
+        postKind: full.kind,
+        referencesWatchedAuthor: full.referenced.length > 0 && full.referenced.every((r) => r.authorId !== undefined && this.#byId.has(r.authorId)),
+        warningKeywords: extraction.warning.keywords,
+        postCreatedAt: full.createdAt,
+        receivedAt,
+      },
+      extraction.mints,
+      accounts,
+    );
+    for (const s of signals) {
+      if (!recordSignal(db, log.redactor, s)) continue;
+      this.stats.signals++;
+      const a = assessSignal(s);
+      log.info("signal", { mint: s.mint, post_id: s.postId, handle: account.handle, severity: a.severity, reasons: a.reasons, origins: s.origins });
+      this.#o.onSignal(s, a);
+    }
+    return signals;
+  }
+}
