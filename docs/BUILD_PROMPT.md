@@ -10,8 +10,10 @@ README.md, docs/ARCHITECTURE.md and docs/VALIDATOR.md. It must be launch-ready
 and tested by Nov 17, 2026, two days before GTA 6 releases on Nov 19.
 
 OUTCOME: A TypeScript (Node 22) service that:
-1. Watches every official account in config/accounts.yaml by numeric ID
-   (X first, then Kick, then Telegram, then polling sources).
+1. Watches every official account in config/accounts.yaml by numeric ID:
+   X Activity API post.create + Filtered Stream first, then Kick webhooks,
+   then Twitch EventSub, then tier-2 confirmation sources. Use official APIs
+   only: no scraping, no self-bots.
 2. Extracts a Solana mint from post text, links and image OCR.
 3. Validates it with the VALIDATOR.md checks, using a pre-warmed cache.
 4. Buys through pump.fun curve, then PumpSwap, then Jupiter, with priority

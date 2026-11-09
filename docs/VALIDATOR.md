@@ -19,6 +19,10 @@ Anything that fails a **BLOCK** check stops the buy and sends a Telegram alert. 
 | Address appears in the post itself (text, link, or OCR of an attached image) | BLOCK | Never take an address from replies or comments. |
 | If both Adin and Banks post, the addresses match | BLOCK on mismatch | Two different addresses means something is wrong. Halt and alert. |
 | Post isn't a "don't buy X, it's fake" warning | WARN | Celebs often post fake addresses to warn people. A keyword filter flags "fake", "not mine" and "scam". |
+| **Hacked-account guard**: optionally buy part of the size on the first official post, and the rest only when a second source confirms the same address (the other person, or another platform) | Setting for the guardrails session | Official accounts do get hacked. Roaring Kitty's X posted a pump.fun address (RKC, −85% within the hour). Kanye's Instagram promoted a fake coin (−96%). See [research](research/past-celebrity-launches.md). |
+| **Deleted post**: if the source post disappears within N minutes, the exit manager sells | Exit trigger | Hacked or fake posts get deleted fast: RKC within an hour, ROSS in ~20 min. |
+
+**Decoy contracts:** for YZY, Kanye's team deployed 25 contracts and made one of them official, to beat snipers who guess the address. Our bot never guesses, so decoys don't fool it. It's one more reason the pre-warm list must never trigger a buy.
 
 ### 2. Address checks (is it a token?)
 

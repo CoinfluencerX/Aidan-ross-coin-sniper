@@ -21,8 +21,12 @@
 
 ### Watcher
 - **Sources**: every official account for Adin Ross and FaZe Banks (see `config/accounts.yaml`), tracked by **numeric platform ID**.
-- **Tier 1, auto-buy**: platforms with push/stream delivery (X, Kick, Telegram).
-- **Tier 2, auto-buy only if the address matches**: polling-only platforms (Instagram, TikTok, YouTube, Threads). They're slower, so in practice they mostly confirm what tier 1 already saw.
+- **Tier 1, can trigger a buy:**
+  - **X Activity API** `post.create`, filtered by user ID. X says delivery is sub-second, and it costs ~$0.005 per event (pay-per-use since Feb 2026). Filtered Stream (`from:` rule, ~4–5 s P99) runs as a redundant path.
+  - **Kick official webhooks** on Adin's user ID 904404: his own chat messages (`chat.message.sent` where sender = broadcaster) and stream title changes. Free.
+  - **Twitch EventSub** title and go-live events for both accounts. Free.
+- **Tier 2, confirmation only:** YouTube (WebSub), Instagram and Threads (Graph API polling), and Adin's Discord (a followed announcement channel). These are minutes slower, and TikTok and Snapchat have no usable API. **No scraping and no self-bots.** Both break the platforms' terms and get accounts banned.
+- **Neither of them has an official Telegram.** Any "Adin Ross Telegram" is fake.
 - **Extraction**: Solana base58 regex, plus mint parsing from pump.fun / dexscreener / birdeye / solscan / jup.ag URLs, plus t.co and shortener expansion, plus OCR on attached images (celebs often post a screenshot).
 - Dedupes across sources and emits one `AddressSignal {mint, source, postId, receivedAt}`.
 
@@ -41,6 +45,12 @@ See [VALIDATOR.md](VALIDATOR.md).
 - Take-profit ladder: sell a set % of the position at each % gain target.
 - Trailing stop, hard stop-loss and max hold time. Note: in a crash, the stop fills *much* worse than the trigger because of slippage.
 - Sells get a higher priority fee and tip than buys.
+- **On-chain exit triggers**, from the research. Each one sells right away:
+  - liquidity removed from the pool (LIBRA's creator pulled $87M);
+  - single-sided liquidity withdrawn (MELANIA, YZY);
+  - the creator, dev or celebrity wallet sells (DAVIDO, GREED, JASON);
+  - the source post is deleted.
+- **Take-profit is sized against pool depth, not displayed market cap.** The HAWK sniper's position was worth ~$85M on paper at peak, but they realized ~$2.3M. The pool wasn't deep enough to exit at the displayed price.
 
 ### Control and ops
 - Telegram bot: alert on every signal, check result, transaction and fill. Commands: `/status`, `/sell <pct>`, `/kill`.

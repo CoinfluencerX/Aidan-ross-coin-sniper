@@ -1,0 +1,87 @@
+# Watched accounts. Only posts from these IDs can trigger a buy.
+# Source: docs/research/accounts-and-background.md (looked up 2026-11-09).
+# Always match on numeric IDs, never handles. The bot re-resolves these through
+# the official APIs at startup and refuses to start if a handle maps to a different ID.
+#
+# tier 1 = can trigger a buy on its own (push/stream delivery)
+# tier 2 = confirmation only (counts toward second-source confirmation, never buys alone)
+
+people:
+  adin_ross:
+    x:
+      - handle: adinross
+        user_id: "759660076214853632"
+        tier: 1
+      - handle: AR15thed3mon        # alt account, not cross-linked from his profiles
+        user_id: "1511793806080819202"
+        tier: 2
+    kick:
+      - slug: adinross
+        user_id: 904404             # his main platform; watch his own chat messages + stream title
+        channel_id: 875396
+        chatroom_id: 875062
+        tier: 1
+    twitch:
+      - login: adinross
+        user_id: "59299632"
+        tier: 1                     # title / go-live events only
+    youtube:
+      - name: Adin Live
+        channel_id: UCey-eDTR5J6xU6pZ2f4guoA
+        tier: 2
+      - name: Adin Ross (vlog)
+        channel_id: UCpq0Ou2ObQr-LbTB6hsl8BA
+        tier: 2
+    instagram:
+      - username: adinross
+        tier: 2                     # polling only (Graph API business discovery, if it's a pro account)
+    threads:
+      - username: adinross
+        tier: 2
+    tiktok:
+      - username: adinross
+        tier: 2                     # no official real-time API; manual/low-priority
+    discord:
+      - server: "Adin's Planet"
+        guild_id: "760305693462626314"
+        invite: https://discord.gg/adinross
+        tier: 2                     # only via a followed announcement channel; never a self-bot
+    telegram: []                    # none official; treat any "Adin Ross Telegram" as fake
+
+  faze_banks:
+    x:
+      - handle: Banks
+        user_id: "363811679"
+        tier: 1
+      - handle: MarketBubble        # his show's account (org-verified)
+        user_id: "1729276822485889024"
+        tier: 2
+    twitch:
+      - login: fazebanks
+        user_id: "695034438"
+        tier: 1
+    youtube:
+      - name: FaZe Banks
+        channel_id: UCfhmwml--SRANrIVWxEM-SQ
+        tier: 2
+    instagram:
+      - username: banks
+        tier: 2
+    kick: []                        # none. kick.com/banks is a DIFFERENT verified person
+    telegram: []
+
+# Never trust these, even if they post a matching address.
+exclude:
+  x_handles: [RoundtableSpace, AdinUpdate, novaraszn, streamupdates_, scubaryan_]
+  kick_slugs: [banks, fazebanks]
+  youtube_channel_ids: [UC_CX18y9dGVS8qW4q41Ypmg, UCDv75EpGUZjimTxJq25xClg, UCa6I74SXTJNYbH9V9Ts0k1w]
+  tiktok_usernames: [banks, fazebanks, johnjam11703, adin_clip]
+
+# Known fake tokens. Never buy, whatever posts them.
+blocked_mints:
+  - mint: Ce8nnx1XqLBEE6ChG44xEwcSsK6PS2uv4NX9B7bYpump
+    note: '"Official Adin Ross Coin (ADINROSS)" on pump.fun, not linked from any official profile'
+
+# Dry-run only: your own test account. Leave empty in live mode.
+test_accounts:
+  x: []   # add your test account's numeric user_id here for the M5 dry run
