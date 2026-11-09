@@ -1,0 +1,22 @@
+# Secrets: never commit
+.env
+.env.*
+!.env.example
+*.key
+*keypair*.json
+id.json
+wallets/
+secrets/
+
+# Runtime state
+data/
+*.sqlite
+*.sqlite-journal
+logs/
+*.log
+
+# Build
+node_modules/
+dist/
+coverage/
+.DS_Store
