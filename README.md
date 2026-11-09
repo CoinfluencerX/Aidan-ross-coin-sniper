@@ -1,4 +1,4 @@
-# Adin Ross coin sniper
+# gta6-coin-sniper
 
 A Solana sniper that buys the coin Adin Ross and FaZe Banks have talked about launching for their GTA 6 roleplay server. It buys **the moment the contract address is posted from one of their official accounts**, then sells on preset % gain rules.
 
@@ -10,9 +10,18 @@ Needs Node ≥ 22.18. TypeScript runs directly, so there's no build step.
 
 ```bash
 npm install
+git config core.hooksPath scripts/git-hooks   # once per clone: blocks secret commits
+cp .env.example .env && chmod 600 .env        # then fill it in yourself
 npm run check                 # typecheck + tests
 npm start -- --mode dry-run   # boots, validates config, writes data/dry-run.sqlite, exits
 ```
+
+### Secrets (this repo is public)
+
+- Every key lives in `.env`, which is gitignored and was never committed. The wallet keypair file lives **outside** the repo.
+- `scripts/git-hooks/pre-commit` refuses to commit `.env*` (except `.env.example`), keypair/wallet files, `data/`, and secret-shaped strings: X bearer tokens, Telegram bot tokens, RPC api-keys, GitHub tokens, Solana secret keys.
+- GitHub secret scanning and push protection are on as a second net.
+- The bot's logs redact every secret. Still, **never show `.env` on screen**. If a key ever appears in a recording, revoke and regenerate it.
 
 Live mode is locked. It needs `--mode live` **and** `MODE=live` + `LIVE=1` in `.env`, real (non-placeholder) guardrails, and a wallet and Telegram setup. Even then it stays refused until the executor ships in M3.
 

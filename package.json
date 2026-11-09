@@ -1,5 +1,5 @@
 {
-  "name": "adin-ross-coin-sniper",
+  "name": "gta6-coin-sniper",
   "version": "0.1.0",
   "private": true,
   "description": "Snipes the coin posted by Adin Ross / FaZe Banks official accounts, then exits on preset rules.",
