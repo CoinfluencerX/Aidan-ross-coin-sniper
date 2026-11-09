@@ -1,0 +1,35 @@
+# Validator check levels. See docs/VALIDATOR.md for what each check does.
+#   block = stop the buy and alert
+#   warn  = alert, but buy anyway
+#   off   = skip the check
+# "Core" checks enforce the one rule (official post only) and must stay `block`.
+# The config loader rejects anything else for them.
+
+checks:
+  # source
+  allowlisted_author: block        # core
+  original_post: block
+  address_in_post: block           # core
+  cross_account_match: block
+  warning_post_filter: warn
+  # address
+  valid_pubkey: block              # core
+  is_mint: block                   # core
+  blocked_mint: block              # core: known fakes in accounts.yaml
+  recent_mint: warn
+  name_matches_post: warn
+  # sellability
+  freeze_authority_null: block
+  no_dangerous_extensions: block
+  transfer_fee_max: block
+  sell_simulation: block
+  mint_authority_revoked: warn
+  # market
+  route_exists: block
+  liquidity_depth: block
+  holder_concentration: warn
+
+params:
+  recent_mint_max_age_hours: 24
+  transfer_fee_max_bps: 100        # 1%
+  warning_keywords: [fake, "not mine", "not me", scam, hacked, "don't buy", "dont buy", impersonat]

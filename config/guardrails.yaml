@@ -1,0 +1,30 @@
+# Guardrails: how much to buy and when to sell.
+#
+# EVERY NUMBER HERE IS A PLACEHOLDER, NOT A RECOMMENDATION. The owner sets the real values
+# in the guardrails session. Live mode refuses to start while:
+#   - status is "placeholder"
+#   - take_profit_ladder is empty
+#   - no stop (stop_loss_pct / trailing_stop_pct / max_hold_minutes) is set
+status: placeholder        # change to "set" once the owner has chosen real values
+
+buy:
+  sol_per_buy: 0.01
+  max_slippage_bps: 1500                 # 1500 bps = 15%
+  priority_fee_micro_lamports: 100000
+  jito_tip_lamports: 100000
+  max_entry_mcap_usd: null               # null = no cap
+  max_price_multiple_vs_first_trade: null
+  max_open_positions: 1                  # one buy only
+
+confirmation:
+  first_signal_fraction: 1.0             # 1.0 = full size on the first official post. Below 1 = the rest waits for a second source
+  second_source_window_seconds: 120
+
+exit:
+  take_profit_ladder: []                 # format: [{ gain_pct: <gain %>, sell_pct: <% of position> }, ...]
+  trailing_stop_pct: null
+  stop_loss_pct: null
+  max_hold_minutes: null
+  sell_on_source_deleted: true
+  sell_on_liquidity_removed: true
+  sell_on_creator_sell: true

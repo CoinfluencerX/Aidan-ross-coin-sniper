@@ -30,6 +30,7 @@ Anything that fails a **BLOCK** check stops the buy and sends a Telegram alert. 
 |---|---|---|
 | Valid base58 32-byte public key | BLOCK | Typos, truncated addresses. |
 | Account is a **mint**, owned by SPL Token or Token-2022 | BLOCK | Celebs sometimes post wallet addresses. |
+| Mint isn't on the `blocked_mints` list in `config/accounts.yaml` | BLOCK (core) | Known fakes, like the "Official Adin Ross Coin" already on pump.fun. |
 | Mint was created recently (configurable, e.g. < 24h) | WARN | An old token is probably not the new launch. |
 | Token name or symbol relates to the post text | WARN | Catches the wrong address being pasted. |
 

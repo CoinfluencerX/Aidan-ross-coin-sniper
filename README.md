@@ -2,7 +2,19 @@
 
 A Solana sniper that buys the coin Adin Ross and FaZe Banks have talked about launching for their GTA 6 roleplay server. It buys **the moment the contract address is posted from one of their official accounts**, then sells on preset % gain rules.
 
-> **Status:** planning. No bot code yet. GTA 6 releases **Nov 19, 2026**. Target: launch-ready by **Nov 17**.
+> **Status:** M0 done (scaffold, config, redacting logger, SQLite state, dry-run boot). No watchers or trading yet. GTA 6 releases **Nov 19, 2026**. Target: launch-ready by **Nov 17**.
+
+## Quick start
+
+Needs Node ≥ 22.18. TypeScript runs directly, so there's no build step.
+
+```bash
+npm install
+npm run check                 # typecheck + tests
+npm start -- --mode dry-run   # boots, validates config, writes data/dry-run.sqlite, exits
+```
+
+Live mode is locked. It needs `--mode live` **and** `MODE=live` + `LIVE=1` in `.env`, real (non-placeholder) guardrails, and a wallet and Telegram setup. Even then it stays refused until the executor ships in M3.
 
 ## The one rule
 

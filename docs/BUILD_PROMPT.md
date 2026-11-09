@@ -23,9 +23,10 @@ OUTCOME: A TypeScript (Node 22) service that:
 6. Reports every step to my Telegram and accepts /status /sell /kill.
 
 BUILD ORDER (finish and verify each step before starting the next):
-M0  Scaffold: pnpm + TS strict + vitest, config loader (yaml + .env), structured
-    logger that redacts secrets, SQLite state. Verify: `pnpm test` passes and
-    `pnpm start --mode dry-run` boots and exits cleanly.
+M0  [DONE 2026-11-09] Scaffold: npm + TS strict + vitest, config loader
+    (yaml + .env), structured logger that redacts secrets, SQLite state.
+    Verify: `npm run check` passes and `npm start -- --mode dry-run` boots
+    and exits cleanly.
 M1  Address extraction + X watcher. Unit-test extraction against fixtures
     (plain address, pump.fun URL, dexscreener URL, t.co link, address in an
     image, a "this is FAKE" warning post, a reply carrying a different
@@ -67,8 +68,8 @@ STOP AND ASK ME WHEN: an API plan or credential is missing; a platform can't be
 watched in real time without breaking its terms; a check in VALIDATOR.md is
 ambiguous; or a milestone's verification fails twice for the same reason.
 
-AFTER EACH MILESTONE: commit on a feature branch, then report what changed,
-the verification you ran with its output, and what's next.
+AFTER EACH MILESTONE: commit (ask me which branch first), then report what
+changed, the verification you ran with its output, and what's next.
 ```
 
 ---

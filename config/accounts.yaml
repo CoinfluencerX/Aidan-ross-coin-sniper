@@ -84,4 +84,4 @@ blocked_mints:
 
 # Dry-run only: your own test account. Leave empty in live mode.
 test_accounts:
-  x: []   # add your test account's numeric user_id here for the M5 dry run
+  x: []   # for the M5 dry run, e.g. - { handle: yourtesthandle, user_id: "1234567890" }
