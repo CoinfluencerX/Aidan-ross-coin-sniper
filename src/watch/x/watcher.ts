@@ -1,12 +1,12 @@
 import type { Mode } from "../../config/mode.ts";
 import type { AccountsConfig, ValidatorConfig } from "../../config/schemas.ts";
 import type { FetchFn } from "../../extract/expand.ts";
-import { extractFromPost } from "../../extract/extract.ts";
 import type { OcrEngine } from "../../extract/ocr.ts";
 import type { Logger } from "../../log/logger.ts";
-import { audit } from "../../state/audit.ts";
 import type { Db } from "../../state/db.ts";
-import { assessSignal, buildSignals, recordSignal, type AddressSignal, type Assessment, type WatchedAccount, type XPath } from "../signal.ts";
+import type { ChainPresence } from "../../evm/locate.ts";
+import { processPost } from "../pipeline.ts";
+import type { AddressSignal, Assessment, EvmSighting, WatchedAccount, XPath } from "../signal.ts";
 import { POST_QUERY, XApiError, type XClient } from "./client.ts";
 import { fromActivityEvent, fromFilteredStream, normalizeTweet, type XPost } from "./normalize.ts";
 import { runStreamLoop } from "./stream.ts";
@@ -101,7 +101,10 @@ export interface XWatcherOptions {
   mode: Mode;
   ocr?: OcrEngine | undefined;
   fetch?: FetchFn | undefined;
-  onSignal: (s: AddressSignal, a: Assessment) => void;
+  onSignal: (s: AddressSignal, a: Assessment, signalId: number) => void;
+  /** Ethereum-style 0x address in an official post: alert only, never bought. */
+  onEvm?: ((s: EvmSighting, a: Assessment) => void) | undefined;
+  locateEvm?: ((address: string) => Promise<ChainPresence[]>) | undefined;
   paths?: readonly XPath[];
   stallMs?: number;
 }
@@ -111,7 +114,7 @@ export class XWatcher {
   readonly #byId: Map<string, WatchedAccount>;
   readonly #seenPosts = new Set<string>();
   readonly #pending = new Set<Promise<void>>();
-  stats = { events: 0, posts: 0, ignoredAuthors: 0, duplicates: 0, signals: 0 };
+  stats = { events: 0, posts: 0, ignoredAuthors: 0, duplicates: 0, signals: 0, evm: 0 };
 
   constructor(o: XWatcherOptions) {
     this.#o = o;
@@ -200,55 +203,33 @@ export class XWatcher {
       }
     }
 
-    const extraction = await extractFromPost(full.content, {
-      warningKeywords: this.#o.validator.params.warning_keywords,
-      ocr: this.#o.ocr,
-      fetch: this.#o.fetch,
-    });
-
-    const postUrl = `https://x.com/${account.handle}/status/${post.id}`;
-    log.info("x.post", {
-      path,
-      post_id: post.id,
-      url: postUrl,
-      handle: account.handle,
-      test_account: account.isTest,
-      kind: full.kind,
-      text: full.content.text,
-      links: full.content.urls.length,
-      images: full.content.images.length,
-      mints: extraction.mints.map((m) => m.mint),
-      ignored: extraction.ignored,
-      warning_keywords: extraction.warning.keywords,
-      ocr: extraction.ocr,
-      lag_ms: full.createdAt ? receivedAt - Date.parse(full.createdAt) : null,
-    });
-    audit(db, log.redactor, "x.post", { path, post_id: post.id, account, kind: full.kind, extraction });
-
-    const signals = buildSignals(
+    const result = await processPost(
       {
         source: "x",
         path,
-        postId: post.id,
-        postUrl,
-        accountId: account.userId,
+        id: post.id,
+        url: `https://x.com/${account.handle}/status/${post.id}`,
         account,
-        postKind: full.kind,
+        kind: full.kind,
         referencesWatchedAuthor: full.referenced.length > 0 && full.referenced.every((r) => r.authorId !== undefined && this.#byId.has(r.authorId)),
-        warningKeywords: extraction.warning.keywords,
-        postCreatedAt: full.createdAt,
-        receivedAt,
+        createdAt: full.createdAt,
+        content: full.content,
       },
-      extraction.mints,
-      accounts,
+      receivedAt,
+      {
+        accounts,
+        validator: this.#o.validator,
+        db,
+        log,
+        ocr: this.#o.ocr,
+        fetch: this.#o.fetch,
+        onSignal: this.#o.onSignal,
+        onEvm: this.#o.onEvm,
+        locateEvm: this.#o.locateEvm,
+      },
     );
-    for (const s of signals) {
-      if (!recordSignal(db, log.redactor, s)) continue;
-      this.stats.signals++;
-      const a = assessSignal(s);
-      log.info("signal", { mint: s.mint, post_id: s.postId, handle: account.handle, severity: a.severity, reasons: a.reasons, origins: s.origins });
-      this.#o.onSignal(s, a);
-    }
-    return signals;
+    this.stats.signals += result.newSignals;
+    this.stats.evm += result.evm.length;
+    return result.signals;
   }
 }

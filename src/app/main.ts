@@ -10,10 +10,13 @@ import { createLogger, type Logger } from "../log/logger.ts";
 import { createRedactor } from "../log/redact.ts";
 import { audit } from "../state/audit.ts";
 import { openDb, SCHEMA_VERSION, type Db } from "../state/db.ts";
-import { formatAlert } from "../alert/console.ts";
+import { formatAlert, formatEvmAlert } from "../alert/console.ts";
+import { locateEvmAddress } from "../evm/locate.ts";
 import type { FetchFn } from "../extract/expand.ts";
 import { tesseractOcr, type OcrEngine } from "../extract/ocr.ts";
+import type { PipelineDeps } from "../watch/pipeline.ts";
 import type { XPath } from "../watch/signal.ts";
+import { startWebhookWatchers } from "./webhooks.ts";
 import { XApiError, XClient } from "../watch/x/client.ts";
 import {
   buildWatchList,
@@ -35,6 +38,7 @@ const CONNECTION_KEYS = [
   "X_BEARER_TOKEN",
   "KICK_CLIENT_ID",
   "TWITCH_CLIENT_ID",
+  "WEBHOOK_PUBLIC_URL",
   "TELEGRAM_BOT_TOKEN",
   "TELEGRAM_OWNER_CHAT_ID",
 ] as const satisfies readonly (keyof AppEnv)[];
@@ -54,6 +58,8 @@ export interface MainOptions {
   alert?: (text: string) => void;
   /** Stops the watcher (Ctrl-C). */
   signal?: AbortSignal;
+  /** Test hook: port for the Kick/Twitch webhook server (0 = any free port, bound to localhost). */
+  webhookPort?: number;
 }
 
 const USAGE = `Usage: npm start -- [--mode dry-run|live] [--watch [--duration <seconds>]] [--config-dir config] [--data-dir data] [--env-file .env]
@@ -274,6 +280,20 @@ async function watch(
   const ocr = opts.ocr === null ? undefined : (opts.ocr ?? defaultOcr(log));
   const alert = opts.alert ?? ((text: string) => process.stderr.write(text + "\n"));
   const color = opts.alert ? false : Boolean(process.stderr.isTTY) || process.env.FORCE_COLOR !== undefined;
+  // Every source (X, Kick, Twitch) feeds the same pipeline, so the rules can't differ between them.
+  const pipeline: PipelineDeps = {
+    accounts: config.accounts,
+    validator: config.validator,
+    db,
+    log,
+    ocr,
+    fetch: opts.fetch,
+    onSignal: (s, a) => alert(formatAlert(s, a, { color, mode, now: Date.now() })),
+    // 0x addresses: find the chain, then alert. Never bought.
+    locateEvm: (address) =>
+      locateEvmAddress(address, { rpcUrls: { ethereum: env.ETH_RPC_URL, base: env.BASE_RPC_URL }, ...(opts.fetch ? { fetch: opts.fetch } : {}) }),
+    onEvm: (s, a) => alert(formatEvmAlert(s, a, { color, mode, now: Date.now() })),
+  };
   const watcher = new XWatcher({
     client,
     accounts: config.accounts,
@@ -285,7 +305,17 @@ async function watch(
     ocr,
     fetch: opts.fetch,
     paths,
-    onSignal: (s, a) => alert(formatAlert(s, a, { color, mode, now: Date.now() })),
+    onSignal: pipeline.onSignal,
+    locateEvm: pipeline.locateEvm,
+    onEvm: pipeline.onEvm,
+  });
+  const webhooks = await startWebhookWatchers({
+    env,
+    accounts: config.accounts,
+    pipeline,
+    log,
+    fetch: opts.fetch,
+    ...(opts.webhookPort !== undefined ? { port: opts.webhookPort, host: "127.0.0.1" } : {}),
   });
 
   const stops = [opts.signal, durationMs !== undefined ? AbortSignal.timeout(durationMs) : undefined].filter(
@@ -295,6 +325,8 @@ async function watch(
   log.info("watch.started", {
     mode,
     paths,
+    webhook_sources: webhooks?.sources ?? [],
+    webhook_port: webhooks?.port ?? null,
     duration_s: durationMs !== undefined ? durationMs / 1000 : null,
     ocr: Boolean(ocr),
     accounts: watchList.map((a) => ({ handle: a.handle, user_id: a.userId, tier: a.tier, test: a.isTest })),
@@ -303,7 +335,8 @@ async function watch(
 
   const { failedPaths } = await watcher.run(stop);
   const everyPathFailed = failedPaths.length === paths.length && !stop.aborted;
-  log.info("watch.stopped", { stats: watcher.stats, failed_paths: failedPaths });
+  await webhooks?.close();
+  log.info("watch.stopped", { stats: watcher.stats, failed_paths: failedPaths, ...(webhooks ? { webhook_stats: webhooks.stats() } : {}) });
   audit(db, log.redactor, "shutdown", { mode, reason: everyPathFailed ? "all_paths_failed" : "stopped", stats: watcher.stats });
   return everyPathFailed ? EXIT.FATAL : EXIT.OK;
 }

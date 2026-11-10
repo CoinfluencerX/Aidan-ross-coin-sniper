@@ -9,9 +9,12 @@ export const SECRET_ENV_KEYS = [
   "RPC_WS_URL",
   "GRPC_URL",
   "GRPC_TOKEN",
+  "ETH_RPC_URL",
+  "BASE_RPC_URL",
   "X_BEARER_TOKEN",
   "KICK_CLIENT_SECRET",
   "TWITCH_CLIENT_SECRET",
+  "TWITCH_EVENTSUB_SECRET",
   "TELEGRAM_BOT_TOKEN",
 ] as const;
 
@@ -31,11 +34,21 @@ export const EnvSchema = z.object({
   JITO_BLOCK_ENGINE_URL: optionalUrl,
   WALLET_KEYPAIR_PATH: optionalString,
 
+  // Optional. Only used to tell which chain a 0x address is on, for the manual-buy alert.
+  ETH_RPC_URL: optionalUrl,
+  BASE_RPC_URL: optionalUrl,
+
   X_BEARER_TOKEN: optionalString,
   KICK_CLIENT_ID: optionalString,
   KICK_CLIENT_SECRET: optionalString,
   TWITCH_CLIENT_ID: optionalString,
   TWITCH_CLIENT_SECRET: optionalString,
+  /** Any random 10-100 character string you make up. Twitch signs its webhooks with it. */
+  TWITCH_EVENTSUB_SECRET: z.string().min(10).max(100).optional(),
+
+  // Kick and Twitch deliver by webhook, so they need a public https address that reaches this port.
+  WEBHOOK_PUBLIC_URL: z.url({ protocol: /^https$/ }).optional(),
+  WEBHOOK_PORT: z.string().regex(/^\d{2,5}$/).default("8787"),
   TELEGRAM_BOT_TOKEN: optionalString,
   TELEGRAM_OWNER_CHAT_ID: optionalString,
 });

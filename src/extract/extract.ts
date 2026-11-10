@@ -1,7 +1,16 @@
 import { ADDRESS_CANDIDATE, isPubkey } from "./base58.ts";
+import { evmAddressesIn, evmFromOcrText, IGNORED_EVM } from "./evm.ts";
 import { expandUrl, type FetchFn } from "./expand.ts";
 import { ocrImageUrl, type OcrEngine } from "./ocr.ts";
-import { isShortener, mintsFromUrl } from "./urls.ts";
+import { hostOf, isShortener, mintsFromUrl } from "./urls.ts";
+
+function safeDecode(url: string): string {
+  try {
+    return decodeURIComponent(url);
+  } catch {
+    return url;
+  }
+}
 
 /**
  * Address extraction. It only ever reads the post's OWN content: its text, its own links
@@ -38,8 +47,17 @@ export interface PostContent {
   images: { url: string; altText?: string | undefined }[];
 }
 
+/** An Ethereum-style 0x address found in the post. Alert only: the bot never buys these. */
+export interface EvmCandidate {
+  /** Lowercase 0x + 40 hex. */
+  address: string;
+  origins: Origin[];
+}
+
 export interface ExtractionResult {
   mints: MintCandidate[];
+  /** Ethereum / Base style addresses. Kept apart from `mints` so they can never reach the buy path. */
+  evm: EvmCandidate[];
   ignored: { mint: string; reason: string }[];
   warning: { flagged: boolean; keywords: string[] };
   ocr: { attempted: number; failed: number; errors: string[] };
@@ -59,7 +77,21 @@ const URL_IN_TEXT = /https?:\/\/[^\s<>"'”’)]+/gi;
 
 class Collector {
   readonly mints: MintCandidate[] = [];
+  readonly evm: EvmCandidate[] = [];
   readonly ignored: { mint: string; reason: string }[] = [];
+
+  addEvm(addresses: readonly string[], origin: Origin): void {
+    for (const address of addresses) {
+      const reason = IGNORED_EVM[address];
+      if (reason) {
+        if (!this.ignored.some((i) => i.mint === address)) this.ignored.push({ mint: address, reason });
+        continue;
+      }
+      const existing = this.evm.find((e) => e.address === address);
+      if (!existing) this.evm.push({ address, origins: [origin] });
+      else if (!existing.origins.some((o) => o.kind === origin.kind && o.detail === origin.detail)) existing.origins.push(origin);
+    }
+  }
 
   add(mint: string, origin: Origin): void {
     const reason = IGNORED_ADDRESSES[mint];
@@ -131,6 +163,7 @@ export async function extractFromPost(post: PostContent, deps: ExtractDeps): Pro
 
   // 1. Text. A t.co link in the text never holds a mint itself, so this is safe to run first.
   c.addFromText(post.text, { kind: "text" });
+  c.addEvm(evmAddressesIn(post.text), { kind: "text" });
   const textUrls = [...post.text.matchAll(URL_IN_TEXT)].map((m) => m[0]);
 
   // 2. Links: prefer what X already expanded; expand shorteners ourselves only if needed.
@@ -148,12 +181,18 @@ export async function extractFromPost(post: PostContent, deps: ExtractDeps): Pro
       links.set(short, final);
     }),
   );
-  for (const final of links.values()) c.addFromUrl(final);
+  for (const final of links.values()) {
+    c.addFromUrl(final);
+    // Any link in an official post that carries a 0x address (etherscan, basescan, dexscreener, uniswap…).
+    const host = hostOf(final);
+    c.addEvm(evmAddressesIn(safeDecode(final)), { kind: "url", detail: final, ...(host ? { host } : {}) });
+  }
 
   // 3. Images: alt text, then OCR.
   for (const img of post.images) {
     if (img.altText) {
       c.addFromText(img.altText, { kind: "alt_text", detail: img.url });
+      c.addEvm(evmAddressesIn(img.altText), { kind: "alt_text", detail: img.url });
       textsForWarning.push(img.altText);
     }
   }
@@ -174,6 +213,7 @@ export async function extractFromPost(post: PostContent, deps: ExtractDeps): Pro
     for (const { img, text } of texts) {
       if (!text) continue;
       c.addFromOcrText(text, { kind: "ocr", detail: img.url });
+      c.addEvm(evmFromOcrText(text), { kind: "ocr", detail: img.url });
       textsForWarning.push(text);
     }
   }
@@ -181,6 +221,7 @@ export async function extractFromPost(post: PostContent, deps: ExtractDeps): Pro
   const keywords = findWarningKeywords(textsForWarning, deps.warningKeywords);
   return {
     mints: c.mints,
+    evm: c.evm,
     ignored: c.ignored,
     warning: { flagged: keywords.length > 0, keywords },
     ocr: ocrStats,

@@ -370,6 +370,7 @@ describe("alert banner", () => {
       mintsInPost: 1,
       warningKeywords: [],
       blockedMintNote: undefined,
+      postText: "CA below",
       postCreatedAt: "2026-11-19T17:00:00.000Z",
       receivedAt: Date.parse("2026-11-19T17:00:01.500Z"),
     } satisfies AddressSignal;

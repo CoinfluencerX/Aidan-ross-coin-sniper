@@ -48,7 +48,14 @@ export function fakeFetch(routes: Route[]) {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
     const method = (init.method ?? "GET").toUpperCase();
     const headers = new Headers(init.headers);
-    const body = typeof init.body === "string" ? JSON.parse(init.body) : undefined;
+    let body: unknown;
+    if (typeof init.body === "string") {
+      try {
+        body = JSON.parse(init.body);
+      } catch {
+        body = init.body; // form-encoded (OAuth token requests)
+      }
+    }
     calls.push({ method, url: url.toString(), auth: headers.get("authorization"), body });
     for (const r of routes) {
       const res = await r({ method, url, body, signal: init.signal ?? undefined });
