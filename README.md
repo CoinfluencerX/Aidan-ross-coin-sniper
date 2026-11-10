@@ -78,7 +78,7 @@ Put every secret into `.env` yourself (copy from `.env.example`). Never paste ke
 - [x] Test X account for dry-run (`TEST_X_ACCOUNTS` in `.env`, so it stays out of this repo)
 - [x] **Solana RPC** (`RPC_HTTP_URL`, `RPC_WS_URL`). Set on Nov 10: a live coin validates and a simulated buy is signed in about 0.7 s from this Mac.
 - [ ] **Guardrail numbers**: SOL per buy, max slippage, take-profit ladder, stops. The shipped file never sells.
-- [ ] **Telegram bot** and your chat id, for alerts and `/sell` `/kill`. The bot exists and its token works; the chat id is still to do (send the bot a message, then `node scripts/telegram-chat-id.ts`).
+- [x] **Telegram bot** and your chat id, for alerts and `/sell` `/kill`. Set on Nov 10: the pre-flight check sent a test message.
 - [ ] **Bot wallet**: `node scripts/new-wallet.ts` makes `~/sniper-wallet.json` (outside the repo) and prints only the public address. Fund it only with what you can lose.
 - [ ] **Server** with an https address, for 24/7 running and for Kick and Twitch.
 - [ ] **Kick and Twitch developer apps** (free).
