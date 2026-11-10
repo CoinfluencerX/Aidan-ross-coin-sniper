@@ -2,6 +2,7 @@ import { formatAlert } from "../alert/console.ts";
 import type { ChainReader } from "../chain/facts.ts";
 import type { AppConfig } from "../config/load.ts";
 import type { Mode } from "../config/mode.ts";
+import type { Executor } from "../exec/executor.ts";
 import type { Logger } from "../log/logger.ts";
 import { audit } from "../state/audit.ts";
 import type { Db } from "../state/db.ts";
@@ -30,8 +31,10 @@ export interface EngineOptions {
   simulateRoundTrip?: ValidatorDeps["simulateRoundTrip"];
   jupiterRoute?: ValidatorDeps["jupiterRoute"];
   solUsd?: ValidatorDeps["solUsd"];
-  /** Called with every verdict (the executor hooks in here). */
-  onVerdict?: ((s: AddressSignal, v: Verdict, signalId: number) => Promise<string[] | void>) | undefined;
+  /** Buys (simulated in dry-run) when the validator passes. Without it, the engine only validates and alerts. */
+  executor?: Executor | undefined;
+  /** Told about every position the executor opens, so the exit manager can start watching it. */
+  onPositionOpened?: ((positionId: number) => void) | undefined;
   now?: () => number;
 }
 
@@ -40,10 +43,17 @@ export function firstBuyLamports(config: AppConfig): bigint {
   return BigInt(Math.round(config.guardrails.buy.sol_per_buy * config.guardrails.confirmation.first_signal_fraction * LAMPORTS_PER_SOL));
 }
 
+/** Raw token units as a decimal number with thousands separators, e.g. 357142857142 at 6 decimals -> "357,142.857142". */
+export function formatUnits(units: bigint, decimals: number): string {
+  const s = units.toString().padStart(decimals + 1, "0");
+  const whole = s.slice(0, s.length - decimals).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return decimals > 0 ? `${whole}.${s.slice(s.length - decimals)}` : whole;
+}
+
 export class Engine {
   readonly #o: EngineOptions;
   readonly #pending = new Set<Promise<void>>();
-  stats = { signals: 0, validated: 0, passed: 0, blocked: 0, errors: 0 };
+  stats = { signals: 0, validated: 0, passed: 0, blocked: 0, bought: 0, skipped: 0, failed: 0, errors: 0 };
 
   constructor(o: EngineOptions) {
     this.#o = o;
@@ -82,7 +92,7 @@ export class Engine {
       mode,
       chain: this.#o.chain,
       db,
-      simulateRoundTrip: this.#o.simulateRoundTrip,
+      simulateRoundTrip: this.#o.executor?.simulateRoundTrip ?? this.#o.simulateRoundTrip,
       jupiterRoute: this.#o.jupiterRoute,
       solUsd: this.#o.solUsd,
       now,
@@ -103,8 +113,39 @@ export class Engine {
     audit(db, log.redactor, "validation", { signal_id: signalId, mint: s.mint, decision: verdict.decision, outcomes: verdict.outcomes, elapsed_ms: verdict.elapsedMs });
 
     const extra = verdictLines(verdict);
-    const executed = await this.#o.onVerdict?.(s, verdict, signalId);
-    if (executed) extra.push(...executed);
+    let executed = false;
+    if (verdict.decision === "buy" && this.#o.executor && verdict.mintFacts && verdict.market) {
+      const lamportsIn = firstBuyLamports(config);
+      const out = await this.#o.executor.buy({ mint: s.mint, signalId, source: s.source, postId: s.postId, lamportsIn, mintFacts: verdict.mintFacts, market: verdict.market });
+      executed = true;
+      const decimals = verdict.mintFacts.decimals ?? 6;
+      if (out.status === "skipped") {
+        this.stats.skipped++;
+        extra.push(`BUY SKIPPED: ${out.reason}`);
+      } else if (out.status === "failed") {
+        this.stats.failed++;
+        extra.push(`BUY FAILED: ${out.error}`, "  This mint is now locked: the bot will not try it again.");
+      } else {
+        this.stats.bought++;
+        // Skip it if the post's timestamp is ahead of our clock (clock skew): a negative delay means nothing.
+        const postLag = s.postCreatedAt ? s.receivedAt - Date.parse(s.postCreatedAt) : undefined;
+        const postToSigned = postLag !== undefined && postLag >= 0 ? postLag + verdict.elapsedMs + out.signedMs : undefined;
+        extra.push(
+          `${out.status === "simulated" ? "BUY SIMULATED" : "BOUGHT"}: ${(Number(out.lamports) / LAMPORTS_PER_SOL).toFixed(4)} SOL -> ${formatUnits(out.tokens, decimals)} tokens via ${out.variant}`,
+          `  validate ${verdict.elapsedMs} ms + build/sign ${out.signedMs} ms${postToSigned !== undefined ? ` · post -> signed tx ${(postToSigned / 1000).toFixed(2)} s` : ""}`,
+          `  position #${out.positionId}${out.status === "simulated" ? " (paper: no real transaction)" : ` · ${out.signature}`}`,
+        );
+        log.info("latency", {
+          mint: s.mint,
+          post_to_watcher_ms: postLag ?? null,
+          validate_ms: verdict.elapsedMs,
+          build_sign_ms: out.signedMs,
+          signal_to_signed_ms: verdict.elapsedMs + out.signedMs,
+          post_to_signed_ms: postToSigned ?? null,
+        });
+        this.#o.onPositionOpened?.(out.positionId);
+      }
+    }
 
     const severity = verdict.decision === "blocked" ? "red" : verdict.warns.length ? "yellow" : "green";
     this.#o.alert(
@@ -113,7 +154,7 @@ export class Engine {
         mode,
         now: now(),
         extra,
-        footer: executed ? `${mode.toUpperCase()}: no real transaction was sent.` : `${mode.toUpperCase()}: nothing is bought.`,
+        footer: mode === "live" ? "LIVE MODE." : executed ? "DRY-RUN: no real transaction was sent." : "DRY-RUN: nothing is bought.",
       }),
     );
     return verdict;

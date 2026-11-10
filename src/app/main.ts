@@ -14,6 +14,9 @@ import { formatEvmAlert } from "../alert/console.ts";
 import { JupiterClient, jupiterRouteCheck, SolPrice } from "../chain/jupiter.ts";
 import { SolanaRpc } from "../chain/rpc.ts";
 import type { ChainReader } from "../chain/facts.ts";
+import type { TradeBuilder } from "../exec/builder.ts";
+import type { Executor } from "../exec/executor.ts";
+import type { Sender } from "../exec/send.ts";
 import { Engine } from "./engine.ts";
 import { locateEvmAddress } from "../evm/locate.ts";
 import type { FetchFn } from "../extract/expand.ts";
@@ -39,6 +42,7 @@ const CONNECTION_KEYS = [
   "GRPC_URL",
   "JITO_BLOCK_ENGINE_URL",
   "WALLET_KEYPAIR_PATH",
+  "SIM_PAYER_PUBKEY",
   "X_BEARER_TOKEN",
   "KICK_CLIENT_ID",
   "TWITCH_CLIENT_ID",
@@ -62,6 +66,8 @@ export interface MainOptions {
   alert?: (text: string) => void;
   /** Stops the watcher (Ctrl-C). */
   signal?: AbortSignal;
+  /** Test hook: replaces the SDK-backed trade builder. */
+  tradeBuilder?: TradeBuilder;
   /** Test hook: port for the Kick/Twitch webhook server (0 = any free port, bound to localhost). */
   webhookPort?: number;
 }
@@ -289,10 +295,23 @@ async function watch(
   const jupiter = new JupiterClient(fetchOpt);
   const solPrice = new SolPrice(() => jupiter.solUsd());
   let chain: ChainReader | undefined;
+  let executor: Executor | undefined;
   if (env.RPC_HTTP_URL) {
     // Loaded only when needed: the Solana and pump.fun SDKs take a few hundred ms to load.
     const { RpcChainReader } = await import("../chain/facts.ts");
-    chain = new RpcChainReader(new SolanaRpc({ url: env.RPC_HTTP_URL, ...fetchOpt }));
+    const { Executor: ExecutorClass } = await import("../exec/executor.ts");
+    const rpc = new SolanaRpc({ url: env.RPC_HTTP_URL, ...fetchOpt });
+    chain = new RpcChainReader(rpc);
+    try {
+      const built = await buildExecutor({ env, mode, config, db, log, rpc, chain, jupiter, opts, ExecutorClass });
+      executor = built.executor;
+      log.info("executor.ready", built.info);
+    } catch (err) {
+      // A wallet problem must stop the bot loudly, not fall back to something else.
+      log.error("executor.unavailable", { error: (err as Error).message });
+      audit(db, log.redactor, "shutdown", { mode, reason: "executor_unavailable" });
+      return EXIT.CONFIG;
+    }
   }
   if (chain) solPrice.start();
   else log.warn("validator.off", { note: "RPC_HTTP_URL isn't set: addresses are caught and alerted, but not validated" });
@@ -304,6 +323,7 @@ async function watch(
     alert,
     color,
     chain,
+    executor,
     jupiterRoute: jupiterRouteCheck(jupiter, config.guardrails.buy.max_slippage_bps),
     solUsd: () => solPrice.get(),
   });
@@ -370,6 +390,54 @@ async function watch(
   log.info("watch.stopped", { stats: watcher.stats, engine: engine.stats, failed_paths: failedPaths, ...(webhooks ? { webhook_stats: webhooks.stats() } : {}) });
   audit(db, log.redactor, "shutdown", { mode, reason: everyPathFailed ? "all_paths_failed" : "stopped", stats: watcher.stats });
   return everyPathFailed ? EXIT.FATAL : EXIT.OK;
+}
+
+/**
+ * Builds the executor. Dry-run gets NO sender, so it cannot put anything on chain.
+ * The wallet file is only read when the owner has put its path in .env themselves.
+ */
+async function buildExecutor(a: {
+  env: AppEnv;
+  mode: Mode;
+  config: AppConfig;
+  db: Db;
+  log: Logger;
+  rpc: SolanaRpc;
+  chain: ChainReader;
+  jupiter: JupiterClient;
+  opts: MainOptions;
+  ExecutorClass: typeof Executor;
+}): Promise<{ executor: Executor; info: Record<string, unknown> }> {
+  const { env, mode, config, opts } = a;
+  const { ephemeralSigner, loadWalletSigner } = await import("../exec/wallet.ts");
+  const signer = env.WALLET_KEYPAIR_PATH ? loadWalletSigner(env.WALLET_KEYPAIR_PATH, a.log.redactor, opts.cwd) : ephemeralSigner();
+  // Who the simulations run as. Live: always the wallet. Dry-run: SIM_PAYER_PUBKEY if given, else the wallet if there is one.
+  const simPayer = mode === "live" ? signer.publicKey : (env.SIM_PAYER_PUBKEY ?? (signer.ephemeral ? undefined : signer.publicKey));
+  let builder = opts.tradeBuilder;
+  if (!builder) {
+    const { SdkTradeBuilder } = await import("../exec/builder.ts");
+    builder = new SdkTradeBuilder({
+      rpcUrl: env.RPC_HTTP_URL!,
+      ...(opts.fetch ? { fetch: opts.fetch } : {}),
+      jupiter: a.jupiter,
+      priorityMicroLamports: config.guardrails.buy.priority_fee_micro_lamports,
+    });
+  }
+  let sender: Sender | undefined;
+  if (mode === "live") {
+    const { LiveSender } = await import("../exec/send.ts");
+    sender = new LiveSender({ rpc: a.rpc, jitoUrl: env.JITO_BLOCK_ENGINE_URL, ...(opts.fetch ? { fetch: opts.fetch } : {}) });
+  }
+  const executor = new a.ExecutorClass({ mode, rpc: a.rpc, chain: a.chain, builder, signer, simPayer, guardrails: config.guardrails, db: a.db, log: a.log, sender });
+  return {
+    executor,
+    info: {
+      mode,
+      can_send: sender !== undefined,
+      wallet: signer.ephemeral ? "none (throwaway key, timing only)" : signer.publicKey,
+      simulates_as: simPayer ?? "nobody: set WALLET_KEYPAIR_PATH or SIM_PAYER_PUBKEY, or every buy fails its simulation",
+    },
+  };
 }
 
 function parseCli(argv: readonly string[]) {

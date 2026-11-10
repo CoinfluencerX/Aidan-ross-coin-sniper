@@ -59,6 +59,25 @@ const MIGRATIONS: readonly string[] = [
     payload_json  TEXT    NOT NULL           -- redacted
   );
   `,
+  // v2: what the exit manager needs to know about a position.
+  `
+  ALTER TABLE positions ADD COLUMN simulated          INTEGER NOT NULL DEFAULT 0;  -- 1 = dry-run paper position
+  ALTER TABLE positions ADD COLUMN venue              TEXT;                        -- pump_curve | pumpswap | jupiter
+  ALTER TABLE positions ADD COLUMN token_program      TEXT;                        -- spl-token | token-2022
+  ALTER TABLE positions ADD COLUMN tokens_bought      TEXT;                        -- raw units, u64 as string
+  ALTER TABLE positions ADD COLUMN tokens_held        TEXT;                        -- raw units still held
+  ALTER TABLE positions ADD COLUMN cost_lamports      INTEGER;
+  ALTER TABLE positions ADD COLUMN proceeds_lamports  INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE positions ADD COLUMN entry_price        REAL;                        -- lamports per raw unit
+  ALTER TABLE positions ADD COLUMN peak_price         REAL;
+  ALTER TABLE positions ADD COLUMN steps_done         INTEGER NOT NULL DEFAULT 0;  -- take-profit steps already sold
+  ALTER TABLE positions ADD COLUMN opened_at          INTEGER;
+  ALTER TABLE positions ADD COLUMN close_reason       TEXT;
+  ALTER TABLE positions ADD COLUMN source             TEXT;                        -- x | kick | twitch
+  ALTER TABLE positions ADD COLUMN post_id            TEXT;
+  ALTER TABLE positions ADD COLUMN creator            TEXT;                        -- pump.fun creator wallet
+  ALTER TABLE trades    ADD COLUMN reason             TEXT;                        -- why a sell fired
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

@@ -34,6 +34,12 @@ export const EnvSchema = z.object({
   JITO_BLOCK_ENGINE_URL: optionalUrl,
   WALLET_KEYPAIR_PATH: optionalString,
 
+  /**
+   * Dry-run only. A public address that holds SOL, used as the trader in simulations before the
+   * bot wallet is funded. Nothing is signed for it and nothing is sent. Ignored in live mode.
+   */
+  SIM_PAYER_PUBKEY: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/, "must be a base58 Solana address").optional(),
+
   // Optional. Only used to tell which chain a 0x address is on, for the manual-buy alert.
   ETH_RPC_URL: optionalUrl,
   BASE_RPC_URL: optionalUrl,

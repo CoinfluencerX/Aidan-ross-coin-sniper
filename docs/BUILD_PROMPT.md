@@ -36,7 +36,7 @@ M2  [DONE 2026-11-09] Validator against mainnet RPC (read-only). Verify with tes
     mints: a normal pump.fun token passes; a mint with freeze authority
     blocks; a Token-2022 mint with a transfer hook or permanent delegate
     blocks; a wallet address blocks.
-M3  Pre-warm listener (gRPC new pump.fun mints + keyword/creator match)
+M3  [EXECUTOR DONE 2026-11-09, pre-warm listener not built] Pre-warm listener (gRPC new pump.fun mints + keyword/creator match)
     and executor in SIMULATE mode only (simulateTransaction, nothing sent).
     Verify: the simulated buy and simulated sell for a live pump.fun token
     both succeed, and the time from signal to signed tx is under 100 ms.

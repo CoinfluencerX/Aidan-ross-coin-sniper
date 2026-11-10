@@ -21,6 +21,7 @@ import {
   XWatcher,
 } from "../src/watch/x/watcher.ts";
 import { solanaRpcRoutes } from "./fake-chain.ts";
+import { fakeBuilder } from "./fake-trade.ts";
 import { fakeFetch, json, ndjsonStream, xApiRoutes } from "./fake-x.ts";
 import { OPEN_CURVE } from "./fixtures/chain.ts";
 import * as F from "./fixtures/x-posts.ts";
@@ -267,20 +268,23 @@ describe("stream loop", () => {
 });
 
 describe("main --watch (fake X API end to end)", () => {
-  function envFile(dir: string) {
+  const SIM_PAYER = "5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9";
+  function envFile(dir: string, extra: Record<string, string> = {}) {
     const path = join(dir, ".env");
-    writeFileSync(path, Object.entries({ LOG_LEVEL: "debug", ...FAKE_SECRETS }).map(([k, v]) => `${k}=${v}`).join("\n") + "\n");
+    writeFileSync(path, Object.entries({ LOG_LEVEL: "debug", ...FAKE_SECRETS, ...extra }).map(([k, v]) => `${k}=${v}`).join("\n") + "\n");
     return path;
   }
 
-  async function runWatch(routes: Parameters<typeof xApiRoutes>[0], extraArgs: string[] = ["--duration", "0.4"]) {
+  async function runWatch(routes: Parameters<typeof xApiRoutes>[0], extraArgs: string[] = ["--duration", "0.4"], extraEnv: Record<string, string> = { SIM_PAYER_PUBKEY: SIM_PAYER }) {
     const dir = tempDir();
+    const rpcCalls: string[] = [];
     const lines: string[] = [];
     const alerts: string[] = [];
     // The validator is on (the fake .env has an RPC URL), so give it a fake chain: a clean mint on an open pump.fun curve.
-    const { fetch, calls } = fakeFetch([...solanaRpcRoutes({ byPosition: [OPEN_CURVE, null] }), ...xApiRoutes(routes)]);
+    const { fetch, calls } = fakeFetch([...solanaRpcRoutes({ byPosition: [OPEN_CURVE, null], calls: rpcCalls }), ...xApiRoutes(routes)]);
     const code = await main({
-      argv: ["--mode", "dry-run", "--watch", ...extraArgs, "--data-dir", dir, "--env-file", envFile(dir)],
+      tradeBuilder: fakeBuilder().builder,
+      argv: ["--mode", "dry-run", "--watch", ...extraArgs, "--data-dir", dir, "--env-file", envFile(dir, extraEnv)],
       env: {},
       cwd: REPO_ROOT,
       write: (l) => lines.push(l),
@@ -289,7 +293,7 @@ describe("main --watch (fake X API end to end)", () => {
       ocr: null,
     });
     const events = lines.map((l) => JSON.parse(l));
-    return { code, events, alerts, calls, dir, text: lines.join("\n") + alerts.join("\n") };
+    return { code, events, alerts, calls, rpcCalls, dir, text: lines.join("\n") + alerts.join("\n") };
   }
 
   it("catches the test account's post on both paths, alerts once, records it, leaks nothing", async () => {
@@ -298,11 +302,17 @@ describe("main --watch (fake X API end to end)", () => {
     expect(r.alerts).toHaveLength(1);
     expect(r.alerts[0]).toContain(F.MINT.plain);
     expect(r.alerts[0]).toContain("@Franklin_ETH1 (TEST ACCOUNT");
-    // Validated against the fake chain. Until the executor (M3) supplies the sell simulation, that one check blocks.
-    expect(r.alerts[0]).toContain("VALIDATOR: BLOCKED");
-    expect(r.alerts[0]).toContain("sell_simulation: couldn't check: no simulator available");
-    expect(r.alerts[0]).not.toMatch(/✗ (?!sell_simulation)/);
-    expect(r.alerts[0]).toContain("pump_curve");
+    // Validated against the fake chain, then bought on paper: built, signed and simulated, never sent.
+    // Yellow, not green: the fake chain has no name metadata for the token, which is a warning.
+    expect(r.alerts[0]).toContain("YELLOW");
+    expect(r.alerts[0]).toContain("VALIDATOR: PASS (");
+    expect(r.alerts[0]).toContain("! name_matches_post");
+    expect(r.alerts[0]).not.toContain("✗");
+    expect(r.alerts[0]).toContain("BUY SIMULATED: 0.0100 SOL -> 357,000.000000 tokens via pump_curve:v3");
+    expect(r.alerts[0]).toContain("position #1 (paper: no real transaction)");
+    expect(r.alerts[0]).toContain("DRY-RUN: no real transaction was sent.");
+    expect(r.rpcCalls.filter((m) => /send/i.test(m))).toEqual([]);
+    expect(r.rpcCalls).toContain("simulateTransaction");
     const names = r.events.map((e) => e.event);
     expect(names).toEqual(expect.arrayContaining(["x.accounts.verified", "x.activity.subscriptions", "x.filtered_stream.rule", "watch.started", "x.post", "signal", "validation", "watch.stopped", "shutdown"]));
     expect(r.events.find((e) => e.event === "watch.stopped").stats).toMatchObject({ posts: 1, duplicates: 1, signals: 1 });
@@ -311,10 +321,21 @@ describe("main --watch (fake X API end to end)", () => {
     const db = new DatabaseSync(join(r.dir, "dry-run.sqlite"));
     expect(db.prepare("SELECT mint, account_id FROM signals").all()).toEqual([{ mint: F.MINT.plain, account_id: F.TEST }]);
     const kinds = (db.prepare("SELECT kind FROM audit_log ORDER BY id").all() as { kind: string }[]).map((k) => k.kind);
-    expect(kinds).toEqual(["boot", "watch.started", "x.post", "validation", "shutdown"]);
+    expect(kinds).toEqual(["boot", "watch.started", "x.post", "validation", "buy.locked", "buy.done", "shutdown"]);
     expect((db.prepare("SELECT COUNT(*) AS n FROM decisions").get() as { n: number }).n).toBeGreaterThan(15);
-    expect(db.prepare("SELECT COUNT(*) AS n FROM positions").get()).toEqual({ n: 0 });
+    expect(db.prepare("SELECT mint, status, simulated, venue FROM positions").all()).toEqual([{ mint: F.MINT.plain, status: "open", simulated: 1, venue: "pump_curve" }]);
+    expect(db.prepare("SELECT side, status, signature FROM trades").all()).toEqual([{ side: "buy", status: "simulated", signature: null }]);
     expect(JSON.stringify(db.prepare("SELECT * FROM audit_log").all())).not.toContain(FAKE_SECRETS.X_BEARER_TOKEN);
+    db.close();
+  });
+
+  it("blocks the buy, with a clear reason, when there's no wallet to simulate with", async () => {
+    const r = await runWatch({ users: ALL_USERS, activity: [F.testAccountPost] }, ["--duration", "0.4"], {});
+    expect(r.alerts[0]).toContain("VALIDATOR: BLOCKED");
+    expect(r.alerts[0]).toContain("sell_simulation: no wallet to simulate with: set WALLET_KEYPAIR_PATH, or SIM_PAYER_PUBKEY for dry-run");
+    expect(r.alerts[0]).toContain("DRY-RUN: nothing is bought.");
+    const db = new DatabaseSync(join(r.dir, "dry-run.sqlite"));
+    expect(db.prepare("SELECT COUNT(*) AS n FROM positions").get()).toEqual({ n: 0 });
     db.close();
   });
 
