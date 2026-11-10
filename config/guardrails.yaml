@@ -26,5 +26,9 @@ exit:
   stop_loss_pct: null
   max_hold_minutes: null
   sell_on_source_deleted: true
+  source_deleted_window_minutes: 30      # keep checking the source post for this long after the buy
   sell_on_liquidity_removed: true
+  liquidity_removed_drop_pct: 50         # pool's SOL side falls this far below the most we've seen
   sell_on_creator_sell: true
+  creator_sell_drop_pct: 10              # creator's balance falls this far below what they held when we bought
+  price_poll_ms: 1000                    # how often the price is re-read

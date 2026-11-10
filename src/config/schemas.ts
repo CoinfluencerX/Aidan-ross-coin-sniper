@@ -126,8 +126,16 @@ export const GuardrailsSchema = z.strictObject({
       stop_loss_pct: z.number().positive().max(100).nullable(),
       max_hold_minutes: nullablePositive,
       sell_on_source_deleted: z.boolean(),
+      /** How long after the buy to keep checking that the source post still exists. */
+      source_deleted_window_minutes: z.number().positive(),
       sell_on_liquidity_removed: z.boolean(),
+      /** Liquidity counts as "removed" when the pool's SOL side falls this far below the most we've seen. */
+      liquidity_removed_drop_pct: z.number().positive().max(100),
       sell_on_creator_sell: z.boolean(),
+      /** The creator counts as "selling" when their balance falls this far below what they held when we bought. */
+      creator_sell_drop_pct: z.number().positive().max(100),
+      /** How often the exit manager re-reads the price, in milliseconds. */
+      price_poll_ms: z.number().int().min(200),
     })
     .superRefine((exit, ctx) => {
       const ladder = exit.take_profit_ladder;

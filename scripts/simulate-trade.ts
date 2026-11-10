@@ -102,7 +102,7 @@ const decimals = verdict.mintFacts.decimals ?? 6;
 console.log(`BUY SIMULATED: ${sol} SOL -> ${formatUnits(buy.tokens, decimals)} tokens via ${buy.variant} (${buy.units ?? "?"} compute units)`);
 console.log(`  build + sign ${buy.signedMs} ms · signal -> signed tx ${validateMs + buy.signedMs} ms · with simulation ${validateMs + buy.totalMs} ms`);
 
-const sell = await executor.sell(buy.positionId, 1, "rehearsal");
+const sell = await executor.sell(buy.positionId, "all", "rehearsal");
 if (sell.status === "failed") console.log(`SELL QUOTE FAILED: ${sell.error}`);
 else console.log(`SELL QUOTED (paper): ${formatUnits(sell.tokensSold, decimals)} tokens -> ${(Number(sell.lamportsOut) / 1e9).toFixed(6)} SOL via ${sell.variant}  (round trip keeps ${((Number(sell.lamportsOut) / Number(lamportsIn)) * 100).toFixed(1)}% after fees and price impact)`);
 console.log(`\nNothing was sent. Rows written to an in-memory database only.\n`);

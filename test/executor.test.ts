@@ -144,10 +144,10 @@ describe("executor: dry-run sells are paper sells from a live quote", () => {
     const { executor, db, rpcCalls } = setup();
     const buy = await executor.buy(buyReq(db));
     if (buy.status !== "simulated") throw new Error("buy failed");
-    const half = await executor.sell(buy.positionId, 0.5, "take_profit_1");
+    const half = await executor.sell(buy.positionId, 178_571_428_571n, "take_profit_1");
     expect(half).toMatchObject({ status: "simulated", tokensSold: 178_571_428_571n, remaining: 178_571_428_571n });
     expect(executor.position(buy.positionId)).toMatchObject({ status: "open", tokens_held: "178571428571" });
-    const rest = await executor.sell(buy.positionId, 1, "stop_loss");
+    const rest = await executor.sell(buy.positionId, "all", "stop_loss");
     expect(rest).toMatchObject({ status: "simulated", remaining: 0n });
     const pos = executor.position(buy.positionId)!;
     expect(pos).toMatchObject({ status: "closed", close_reason: "stop_loss", tokens_held: "0" });
@@ -157,14 +157,14 @@ describe("executor: dry-run sells are paper sells from a live quote", () => {
       { side: "sell", status: "simulated", reason: "stop_loss" },
     ]);
     expect(rpcCalls.filter((c) => /send/i.test(c))).toEqual([]);
-    expect(await executor.sell(buy.positionId, 1, "again")).toEqual({ status: "failed", error: "position isn't open" });
+    expect(await executor.sell(buy.positionId, "all", "again")).toEqual({ status: "failed", error: "position isn't open" });
   });
 
   it("sells on the venue the token is on NOW (curve at buy, PumpSwap after it graduates)", async () => {
     const { executor, db, builderCalls } = setup({ marketNow: market({ venue: "pumpswap" }) });
     const buy = await executor.buy(buyReq(db));
     if (buy.status !== "simulated") throw new Error("buy failed");
-    await executor.sell(buy.positionId, 1, "max_hold");
+    await executor.sell(buy.positionId, "all", "max_hold");
     expect(builderCalls.at(-1)).toMatchObject({ op: "sell", venue: "pumpswap" });
   });
 
@@ -172,7 +172,7 @@ describe("executor: dry-run sells are paper sells from a live quote", () => {
     const { executor, db } = setup({ marketNow: market({ venue: "none", detail: "mid-migration" }) });
     const buy = await executor.buy(buyReq(db));
     if (buy.status !== "simulated") throw new Error("buy failed");
-    expect(await executor.sell(buy.positionId, 1, "stop_loss")).toEqual({ status: "failed", error: "nowhere to sell right now: mid-migration" });
+    expect(await executor.sell(buy.positionId, "all", "stop_loss")).toEqual({ status: "failed", error: "nowhere to sell right now: mid-migration" });
     expect(executor.position(buy.positionId)!.status).toBe("open");
   });
 });
@@ -236,7 +236,7 @@ describe("executor: live path, against a FAKE sender (no network, no funds)", ()
     const buy = await executor.buy(buyReq(db));
     if (buy.status !== "confirmed") throw new Error("buy failed");
     db.prepare("UPDATE positions SET tokens_held = '999999' WHERE id = ?").run(buy.positionId); // stale record
-    const out = await executor.sell(buy.positionId, 1, "panic");
+    const out = await executor.sell(buy.positionId, "all", "panic");
     expect(out).toMatchObject({ status: "confirmed", tokensSold: 100n, remaining: 0n });
     expect(builderCalls.at(-1)).toMatchObject({ op: "sell", amount: 100n });
     expect(sent).toHaveLength(2);

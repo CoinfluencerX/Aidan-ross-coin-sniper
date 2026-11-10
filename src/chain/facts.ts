@@ -130,6 +130,8 @@ export interface ChainReader {
   mintAgeSeconds(mint: string, nowMs: number): Promise<{ seconds: number; exact: boolean } | null>;
   /** Share of supply held by the 10 largest holders, excluding liquidity accounts. 0-100. */
   top10HolderPct(mint: string, supply: bigint, exclude: readonly string[]): Promise<number | null>;
+  /** Token units `owner` holds of `mint` in their standard token account. 0 when they have none. */
+  tokenBalance(owner: string, mint: string, tokenProgram?: MintFacts["tokenProgram"]): Promise<bigint>;
 }
 
 export class RpcChainReader implements ChainReader {
@@ -217,6 +219,13 @@ export class RpcChainReader implements ChainReader {
     if (oldest === null || oldest === undefined) return null;
     // With a full page there are older transactions we didn't fetch, so this is only a lower bound.
     return { seconds: Math.max(0, Math.round(nowMs / 1000 - oldest)), exact: sigs.length < LIMIT };
+  }
+
+  async tokenBalance(owner: string, mint: string, tokenProgram?: MintFacts["tokenProgram"]): Promise<bigint> {
+    const programId = new web3.PublicKey(tokenProgram === "token-2022" ? PROGRAMS.token2022 : PROGRAMS.splToken);
+    const ata = splToken.getAssociatedTokenAddressSync(new web3.PublicKey(mint), new web3.PublicKey(owner), true, programId);
+    const [acc] = await this.#rpc.getAccounts([ata.toBase58()]);
+    return acc ? (tokenAccountAmount(acc.data) ?? 0n) : 0n;
   }
 
   async top10HolderPct(mint: string, supply: bigint, exclude: readonly string[]): Promise<number | null> {

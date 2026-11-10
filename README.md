@@ -2,7 +2,7 @@
 
 A Solana sniper that buys the coin Adin Ross and FaZe Banks have talked about launching for their GTA 6 roleplay server. It buys **the moment the contract address is posted from one of their official accounts**, then sells on preset % gain rules.
 
-> **Status:** Watcher (M1), validator (M2) and executor (M3, simulate only) done. In dry-run the bot catches an official post, validates the token, and builds, signs and simulates the buy. It cannot send: dry-run has no sender, and live mode is still switched off in code. No exit manager yet. GTA 6 releases **Nov 19, 2026**. Target: launch-ready by **Nov 17**.
+> **Status:** Watcher (M1), validator (M2), executor (M3, simulate only) and exit manager with Telegram control (M4) are built and tested. In dry-run the bot catches an official post, validates the token, simulates the buy, then manages a paper position by the sell rules. It cannot send a real transaction: dry-run has no sender, and live mode is switched off in code. Guardrail numbers are still placeholders. GTA 6 releases **Nov 19, 2026**. Target: launch-ready by **Nov 17**.
 
 ## Quick start
 

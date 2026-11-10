@@ -18,11 +18,14 @@ import type { TradeBuilder } from "../exec/builder.ts";
 import type { Executor } from "../exec/executor.ts";
 import type { Sender } from "../exec/send.ts";
 import { Engine } from "./engine.ts";
-import { locateEvmAddress } from "../evm/locate.ts";
+import { handleCommand } from "../control/commands.ts";
+import { Telegram } from "../control/telegram.ts";
+import { locateEvmAddress, uniswapLink } from "../evm/locate.ts";
+import { ExitManager } from "../exit/manager.ts";
 import type { FetchFn } from "../extract/expand.ts";
 import { tesseractOcr, type OcrEngine } from "../extract/ocr.ts";
 import type { PipelineDeps } from "../watch/pipeline.ts";
-import type { XPath } from "../watch/signal.ts";
+import type { Assessment, EvmSighting, XPath } from "../watch/signal.ts";
 import { startWebhookWatchers } from "./webhooks.ts";
 import { XApiError, XClient } from "../watch/x/client.ts";
 import {
@@ -315,6 +318,46 @@ async function watch(
   }
   if (chain) solPrice.start();
   else log.warn("validator.off", { note: "RPC_HTTP_URL isn't set: addresses are caught and alerted, but not validated" });
+  // Telegram: optional. Alerts go out, and only /status /sell /kill /arm come in, from the owner's chat alone.
+  let telegram: Telegram | undefined;
+  if (env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_OWNER_CHAT_ID) {
+    telegram = new Telegram({ token: env.TELEGRAM_BOT_TOKEN, ownerChatId: env.TELEGRAM_OWNER_CHAT_ID, log, ...fetchOpt });
+    try {
+      await telegram.discardBacklog();
+    } catch (err) {
+      log.warn("telegram.unavailable", { error: (err as Error).message });
+      telegram = undefined;
+    }
+  } else {
+    log.info("telegram.not_configured", { note: "TELEGRAM_BOT_TOKEN / TELEGRAM_OWNER_CHAT_ID not set: alerts go to this terminal only" });
+  }
+  /** One-line events (sales, failures): terminal and Telegram. */
+  const notify = (text: string) => {
+    alert(text);
+    void telegram?.send(text);
+  };
+
+  // Exit manager: watches open positions (including ones from before a restart) and sells by the guardrails.
+  const exitManager =
+    executor && chain
+      ? new ExitManager({
+          executor,
+          chain,
+          exit: config.guardrails.exit,
+          db,
+          log,
+          notify,
+          isSourceDeleted: async (source, postId) => {
+            if (source !== "x") return undefined;
+            try {
+              return !(await client.getPost(postId)).data;
+            } catch (err) {
+              return err instanceof XApiError && err.status === 404 ? true : undefined;
+            }
+          },
+        })
+      : undefined;
+
   const engine = new Engine({
     mode,
     config,
@@ -324,6 +367,7 @@ async function watch(
     color,
     chain,
     executor,
+    notify: (text) => void telegram?.send(text),
     jupiterRoute: jupiterRouteCheck(jupiter, config.guardrails.buy.max_slippage_bps),
     solUsd: () => solPrice.get(),
   });
@@ -340,7 +384,10 @@ async function watch(
     // 0x addresses: find the chain, then alert. Never bought.
     locateEvm: (address) =>
       locateEvmAddress(address, { rpcUrls: { ethereum: env.ETH_RPC_URL, base: env.BASE_RPC_URL }, ...(opts.fetch ? { fetch: opts.fetch } : {}) }),
-    onEvm: (s, a) => alert(formatEvmAlert(s, a, { color, mode, now: Date.now() })),
+    onEvm: (s, a) => {
+      alert(formatEvmAlert(s, a, { color, mode, now: Date.now() }));
+      void telegram?.send(evmSummary(s, a));
+    },
   };
   const watcher = new XWatcher({
     client,
@@ -374,6 +421,9 @@ async function watch(
     mode,
     paths,
     validator: chain ? "on" : "off (no RPC_HTTP_URL)",
+    executor: executor ? (mode === "live" ? "live" : "simulate only") : "off",
+    exit_manager: exitManager ? "on" : "off",
+    telegram: telegram ? "on" : "off",
     webhook_sources: webhooks?.sources ?? [],
     webhook_port: webhooks?.port ?? null,
     duration_s: durationMs !== undefined ? durationMs / 1000 : null,
@@ -382,14 +432,77 @@ async function watch(
   });
   audit(db, log.redactor, "watch.started", { mode, paths, accounts: watchList });
 
+  // Background loops stop when the watcher does (Ctrl-C, --duration, or every stream failing).
+  const done = new AbortController();
+  const background = AbortSignal.any([stop, done.signal]);
+  const startedAt = Date.now();
+  const loops: Promise<void>[] = [];
+  if (exitManager) loops.push(exitManager.run(background));
+  if (telegram) {
+    const tg = telegram;
+    loops.push(
+      tg.listen(background, (cmd) =>
+        handleCommand(cmd, {
+          mode,
+          startedAt,
+          now: Date.now,
+          isArmed: () => engine.armed,
+          setArmed: (armed) => {
+            engine.armed = armed;
+            log.warn("control.armed_changed", { armed });
+            audit(db, log.redactor, "control.armed_changed", { armed });
+          },
+          positions: () => exitManager?.status() ?? [],
+          panicSell: (id) => exitManager?.panicSell(id) ?? 0,
+          watching: () => [`X (${watchList.map((a) => "@" + a.handle).join(", ")})`, ...(webhooks?.sources ?? [])],
+          stats: () => ({ watcher: watcher.stats, engine: engine.stats }),
+        }),
+      ),
+    );
+    void tg.send(
+      `Sniper started in ${mode} mode. Watching ${watchList.length} X accounts${webhooks ? ` + ${webhooks.sources.join(", ")}` : ""}. Validator ${chain ? "on" : "OFF (no RPC)"}. Buying ${executor ? "armed" : "off (no executor)"}. Send /help for commands.`,
+    );
+  }
+
   const { failedPaths } = await watcher.run(stop);
   const everyPathFailed = failedPaths.length === paths.length && !stop.aborted;
   await webhooks?.close();
   await engine.drain();
+  done.abort();
+  await Promise.all(loops);
   solPrice.stop();
-  log.info("watch.stopped", { stats: watcher.stats, engine: engine.stats, failed_paths: failedPaths, ...(webhooks ? { webhook_stats: webhooks.stats() } : {}) });
+  const stillOpen = exitManager?.status().length ?? 0;
+  if (stillOpen > 0) {
+    log.warn("shutdown.positions_open", { count: stillOpen, note: "the bot is stopping with open positions: nothing will manage them until it's started again" });
+    await telegram?.send(`Sniper is stopping with ${stillOpen} open position(s). Nothing manages them until it's started again.`);
+  } else {
+    await telegram?.send("Sniper stopped.");
+  }
+  log.info("watch.stopped", {
+    stats: watcher.stats,
+    engine: engine.stats,
+    ...(exitManager ? { exits: exitManager.stats } : {}),
+    ...(telegram ? { telegram: telegram.stats } : {}),
+    failed_paths: failedPaths,
+    ...(webhooks ? { webhook_stats: webhooks.stats() } : {}),
+  });
   audit(db, log.redactor, "shutdown", { mode, reason: everyPathFailed ? "all_paths_failed" : "stopped", stats: watcher.stats });
   return everyPathFailed ? EXIT.FATAL : EXIT.OK;
+}
+
+/** Short plain-text version of a 0x alert, for Telegram. */
+function evmSummary(s: EvmSighting, a: Assessment): string {
+  const found = s.chains.filter((c) => c.status === "contract");
+  const chains = (found.length ? found.map((c) => c.chain) : (["ethereum", "base"] as const)).map(
+    (c) => `${c}${found.length ? "" : " (not confirmed)"}: ${uniswapLink(c, s.address)}`,
+  );
+  return [
+    `${a.severity.toUpperCase()}: 0x address from @${s.account.handle} on ${s.source}. BUY BY HAND, the bot does not buy these.`,
+    s.address,
+    s.postUrl,
+    ...chains,
+    ...a.reasons.map((r) => `${a.severity === "green" ? "ok" : "!"} ${r}`),
+  ].join("\n");
 }
 
 /**

@@ -50,6 +50,7 @@ function chain(over: Partial<ChainReader> & { mint?: MintFacts; market?: MarketF
     metaplexMetadata: async () => ({ name: "Adin Ross RP", symbol: "ADIN" }),
     mintAgeSeconds: async () => ({ seconds: 120, exact: true }),
     top10HolderPct: async () => 12.5,
+    tokenBalance: async () => 0n,
     ...over,
   };
 }

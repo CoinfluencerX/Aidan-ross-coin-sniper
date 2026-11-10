@@ -324,10 +324,10 @@ export class Executor {
   }
 
   /**
-   * Sells `fraction` (0-1] of what the position still holds. Safe to call again after a failure:
-   * in live mode the amount is capped by the wallet's real balance each time.
+   * Sells an exact number of token units, or "all" that the position still holds. Safe to call
+   * again after a failure: in live mode the amount is capped by the wallet's real balance each time.
    */
-  async sell(positionId: number, fraction: number, reason: string): Promise<SellOutcome> {
+  async sell(positionId: number, units: bigint | "all", reason: string): Promise<SellOutcome> {
     const { db, log, mode } = this.#o;
     const now = this.#o.now ?? Date.now;
     const pos = this.position(positionId);
@@ -352,8 +352,8 @@ export class Executor {
         this.#close(positionId, reason, 0n, now());
         return { status: "failed", error: "nothing left to sell" };
       }
-      const amount = fraction >= 1 ? held : (held * BigInt(Math.round(fraction * 10_000))) / 10_000n;
-      if (amount <= 0n) return { status: "failed", error: "amount rounds to zero" };
+      const amount = units === "all" || units >= held ? held : units;
+      if (amount <= 0n) return { status: "failed", error: "nothing to sell" };
       const built = await this.#o.builder.sell({ ...base, tokenAmount: amount });
 
       let signature: string | undefined;

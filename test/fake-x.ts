@@ -9,7 +9,7 @@ export interface FakeCall {
   body: unknown;
 }
 
-export type Route = (req: { method: string; url: URL; body: unknown; signal: AbortSignal | undefined }) => Response | Promise<Response> | undefined;
+export type Route = (req: { method: string; url: URL; body: unknown; signal: AbortSignal | undefined }) => Response | undefined | Promise<Response | undefined>;
 
 export const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });

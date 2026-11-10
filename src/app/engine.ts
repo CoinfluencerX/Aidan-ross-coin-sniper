@@ -35,12 +35,27 @@ export interface EngineOptions {
   executor?: Executor | undefined;
   /** Told about every position the executor opens, so the exit manager can start watching it. */
   onPositionOpened?: ((positionId: number) => void) | undefined;
+  /** Short plain-text version of each alert, for Telegram. */
+  notify?: ((text: string) => void) | undefined;
+  /**
+   * A pump.fun coin that just filled its curve has nowhere to trade for a few seconds while it
+   * moves to PumpSwap. Instead of giving up, re-check this often, for this long.
+   */
+  migrationRetry?: { everyMs: number; forMs: number };
+  sleep?: (ms: number) => Promise<void>;
   now?: () => number;
 }
 
 /** Lamports for the first buy: the configured size times the first-signal fraction (the hacked-account guard). */
 export function firstBuyLamports(config: AppConfig): bigint {
   return BigInt(Math.round(config.guardrails.buy.sol_per_buy * config.guardrails.confirmation.first_signal_fraction * LAMPORTS_PER_SOL));
+}
+
+/** Blocked only because a pump.fun coin has finished its curve and its PumpSwap pool doesn't exist yet. */
+export function isMidMigration(v: Verdict): boolean {
+  const m = v.market;
+  if (v.decision !== "blocked" || !m || !m.isPumpToken || m.curveComplete !== true || m.venue !== "none") return false;
+  return v.blocks.every((b) => b.id === "route_exists" || b.id === "liquidity_depth");
 }
 
 /** Raw token units as a decimal number with thousands separators, e.g. 357142857142 at 6 decimals -> "357,142.857142". */
@@ -53,7 +68,9 @@ export function formatUnits(units: bigint, decimals: number): string {
 export class Engine {
   readonly #o: EngineOptions;
   readonly #pending = new Set<Promise<void>>();
-  stats = { signals: 0, validated: 0, passed: 0, blocked: 0, bought: 0, skipped: 0, failed: 0, errors: 0 };
+  stats = { signals: 0, validated: 0, passed: 0, blocked: 0, bought: 0, skipped: 0, failed: 0, errors: 0, migrationRetries: 0 };
+  /** /kill turns this off: signals are still validated and alerted, but nothing is bought. */
+  armed = true;
 
   constructor(o: EngineOptions) {
     this.#o = o;
@@ -85,7 +102,7 @@ export class Engine {
       return undefined;
     }
 
-    const verdict = await validate(s, firstBuyLamports(config), {
+    const deps: ValidatorDeps = {
       config: config.validator,
       accounts: config.accounts,
       guardrails: config.guardrails,
@@ -96,7 +113,18 @@ export class Engine {
       jupiterRoute: this.#o.jupiterRoute,
       solUsd: this.#o.solUsd,
       now,
-    });
+    };
+    let verdict = await validate(s, firstBuyLamports(config), deps);
+    // Mid-migration: the only thing wrong is that the coin is between the curve and its pool. Wait for the pool.
+    const retry = this.#o.migrationRetry ?? { everyMs: 1_500, forMs: 45_000 };
+    const sleep = this.#o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    const waitStart = now();
+    while (isMidMigration(verdict) && now() - waitStart < retry.forMs) {
+      this.stats.migrationRetries++;
+      log.info("validation.waiting_for_pool", { mint: s.mint, waited_ms: now() - waitStart, note: "curve complete, PumpSwap pool not created yet" });
+      await sleep(retry.everyMs);
+      verdict = await validate(s, firstBuyLamports(config), deps);
+    }
     this.stats.validated++;
     verdict.decision === "buy" ? this.stats.passed++ : this.stats.blocked++;
     recordDecisions(db, signalId, verdict, now());
@@ -114,7 +142,11 @@ export class Engine {
 
     const extra = verdictLines(verdict);
     let executed = false;
-    if (verdict.decision === "buy" && this.#o.executor && verdict.mintFacts && verdict.market) {
+    if (verdict.decision === "buy" && this.#o.executor && !this.armed) {
+      this.stats.skipped++;
+      extra.push("BUY SKIPPED: buying is off (/kill was sent). Send /arm to turn it back on.");
+      log.warn("buy.skipped", { mint: s.mint, reason: "disarmed" });
+    } else if (verdict.decision === "buy" && this.#o.executor && verdict.mintFacts && verdict.market) {
       const lamportsIn = firstBuyLamports(config);
       const out = await this.#o.executor.buy({ mint: s.mint, signalId, source: s.source, postId: s.postId, lamportsIn, mintFacts: verdict.mintFacts, market: verdict.market });
       executed = true;
@@ -148,6 +180,9 @@ export class Engine {
     }
 
     const severity = verdict.decision === "blocked" ? "red" : verdict.warns.length ? "yellow" : "green";
+    this.#o.notify?.(
+      [`${severity.toUpperCase()}: coin address from @${s.account.handle} on ${s.source}${s.account.isTest ? " (TEST ACCOUNT)" : ""}`, s.mint, s.postUrl, ...extra, mode === "dry-run" ? "DRY-RUN: no real transaction." : "LIVE"].join("\n"),
+    );
     this.#o.alert(
       formatAlert(s, { severity, reasons: [] }, {
         color: this.#o.color,
