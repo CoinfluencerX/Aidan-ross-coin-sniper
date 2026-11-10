@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { ChainReader, MarketFacts, MintFacts } from "../src/chain/facts.ts";
 import { SolanaRpc } from "../src/chain/rpc.ts";
 import { PROGRAMS, web3 } from "../src/chain/sdk.ts";
-import { loadAppConfig } from "../src/config/load.ts";
 import { Executor } from "../src/exec/executor.ts";
 import { ephemeralSigner } from "../src/exec/wallet.ts";
 import { ExitManager } from "../src/exit/manager.ts";
@@ -13,9 +12,9 @@ import { solanaRpcRoutes } from "./fake-chain.ts";
 import { fakeBuilder } from "./fake-trade.ts";
 import { fakeFetch } from "./fake-x.ts";
 import * as F from "./fixtures/x-posts.ts";
-import { CONFIG_DIR } from "./helpers.ts";
+import { loadTestConfig } from "./helpers.ts";
 
-const config = loadAppConfig(CONFIG_DIR);
+const config = loadTestConfig();
 const T0 = Date.parse("2026-11-19T17:00:10.000Z");
 const MIN = 60_000;
 

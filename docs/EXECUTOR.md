@@ -11,7 +11,7 @@ The executor turns a validated signal into one buy, and the exit manager's decis
 | Sends it | **No.** No sender object exists in dry-run, and the transaction handed to the RPC for simulation is never signed. | Yes |
 | Records | A paper position and `simulated` trades | Real positions, trades with signatures |
 
-Live mode needs all of: `--mode live`, `MODE=live`, `LIVE=1`, guardrails with `status: set`, a wallet, Telegram, an empty `test_accounts` list, **and** `LIVE_TRADING_AVAILABLE = true` in `src/config/mode.ts`. That last switch is `false` in the repo. Only the owner turns it on.
+Live mode needs all of: `--mode live`, `MODE=live`, `LIVE=1`, guardrails with `status: set`, a wallet, Telegram, no test accounts, **and** `LIVE_TRADING_AVAILABLE = true` in `src/config/mode.ts`. That last switch is `false` in the repo. Only the owner turns it on.
 
 `src/exec/send.ts` is the only file that can put a transaction on chain. `src/chain/rpc.ts` has no send method, and a test checks that.
 

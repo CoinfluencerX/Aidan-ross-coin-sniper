@@ -13,7 +13,7 @@ import { formatUnits } from "../src/app/engine.ts";
 import { RpcChainReader } from "../src/chain/facts.ts";
 import { JupiterClient, jupiterRouteCheck } from "../src/chain/jupiter.ts";
 import { SolanaRpc } from "../src/chain/rpc.ts";
-import { loadAppConfig } from "../src/config/load.ts";
+import { loadAppConfig, withTestAccounts } from "../src/config/load.ts";
 import { SdkTradeBuilder } from "../src/exec/builder.ts";
 import { Executor } from "../src/exec/executor.ts";
 import { ephemeralSigner } from "../src/exec/wallet.ts";
@@ -31,10 +31,11 @@ if (!mint || !payer) {
   process.exit(64);
 }
 const url = (env.RPC_HTTP_URL ?? "").trim() || "https://api.mainnet-beta.solana.com";
-const config = loadAppConfig("config");
+// A stand-in author for the pretend post. No real account is involved.
+const config = withTestAccounts(loadAppConfig("config"), [{ handle: "stand_in_test", user_id: "1" }]);
 const sol = Number(values.sol ?? config.guardrails.buy.sol_per_buy);
 const lamportsIn = BigInt(Math.round(sol * 1e9));
-const test = config.accounts.test_accounts.x[0]!;
+const test = config.accounts.test_accounts.x.at(-1)!;
 const db = openDb(":memory:");
 const log = createLogger({ level: "error", write: (l) => console.error(l) });
 const rpc = new SolanaRpc({ url, timeoutMs: 15_000 });

@@ -54,3 +54,11 @@ export function loadAppConfig(configDir: string): AppConfig {
     validator: loadFile(configDir, "validator.yaml", ValidatorSchema),
   };
 }
+
+/** Add test accounts that came from .env (TEST_X_ACCOUNTS) to the ones in accounts.yaml, without duplicates. */
+export function withTestAccounts(config: AppConfig, extra: { handle: string; user_id: string }[]): AppConfig {
+  if (extra.length === 0) return config;
+  const seen = new Set(config.accounts.test_accounts.x.map((a) => a.user_id));
+  const added = extra.filter((a) => !seen.has(a.user_id) && seen.add(a.user_id));
+  return { ...config, accounts: { ...config.accounts, test_accounts: { x: [...config.accounts.test_accounts.x, ...added] } } };
+}

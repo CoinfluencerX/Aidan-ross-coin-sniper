@@ -33,6 +33,7 @@ Fill `.env` in yourself. What each key unlocks:
 | Key | Needed for | Where it comes from |
 |---|---|---|
 | `X_BEARER_TOKEN` | Watching X (already set) | X developer portal |
+| `TEST_X_ACCOUNTS` | Rehearsals in dry-run | Your own X account as `handle:user_id`. Get the number with `node scripts/x-lookup-user.ts yourhandle` |
 | `RPC_HTTP_URL`, `RPC_WS_URL` | Validator, executor, exit manager | Your Solana RPC provider |
 | `SIM_PAYER_PUBKEY` | Dry-run buys before your wallet is funded | Any public address that holds SOL |
 | `WALLET_KEYPAIR_PATH` | Live trading, and realistic dry-runs | `solana-keygen new -o ~/sniper-wallet.json`, then `chmod 600` it. Keep it outside the repo |
@@ -109,14 +110,14 @@ Set test guardrails first if you want to see the sell rules fire. With the shipp
 Do these in order, and only after the guardrails session:
 
 1. `config/guardrails.yaml`: real numbers, a take-profit ladder, at least one stop, `status: set`.
-2. `config/accounts.yaml`: empty the `test_accounts` list (`x: []`).
+2. `.env`: empty `TEST_X_ACCOUNTS`.
 3. Fund the bot wallet. Set `WALLET_KEYPAIR_PATH` in `.env`. Remove `SIM_PAYER_PUBKEY`.
 4. `src/config/mode.ts`: set `LIVE_TRADING_AVAILABLE = true`.
 5. `.env`: `MODE=live` and `LIVE=1`.
 6. `node scripts/preflight.ts --for live --notify` must show no FAIL.
 7. Start with `npm start -- --mode live --watch`. Check `executor.ready` says `"can_send": true` and shows **your** wallet address.
 
-**Your first live run should be a small test, not launch day.** Test accounts are refused in live mode on purpose, so to test live: set a tiny `sol_per_buy`, temporarily add your own X account to `accounts.yaml` as an `x` entry with `tier: 1` under a throwaway person name, post a real coin's address, watch the buy and the sells, then remove the entry again. This is the first time the sending code runs for real.
+**Your first live run should be a small test, not launch day.** Test accounts are refused in live mode on purpose, so to test live: set a tiny `sol_per_buy`, temporarily add your own X account to `accounts.yaml` as an `x` entry with `tier: 1` under a throwaway person name, post a real coin's address, watch the buy and the sells, then remove the entry again. Don't commit that edit: `accounts.yaml` is public. This is the first time the sending code runs for real.
 
 Starting in live mode also removes the bot's X subscription for the test account, so its posts stop being delivered and billed.
 

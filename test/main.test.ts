@@ -106,6 +106,16 @@ describe("main: refusals", () => {
     expect(existsSync(join(dir, "live.sqlite"))).toBe(false);
   });
 
+  it("refuses live while a test account is set in .env", async () => {
+    const dir = tempDir();
+    const { code, events } = await run(
+      ["--mode", "live", "--data-dir", dir, "--env-file", envFile(dir, { MODE: "live", LIVE: "1", TEST_X_ACCOUNTS: "TestPoster:1000000000000000001" })],
+      { liveAvailable: true },
+    );
+    expect(code).toBe(EXIT.MODE);
+    expect(events.find((e) => e.event === "live.not_ready").problems).toEqual(expect.arrayContaining([expect.stringContaining("TEST_X_ACCOUNTS")]));
+  });
+
   it("rejects an explicit env file that doesn't exist", async () => {
     const { code, text } = await run(["--env-file", join(tempDir(), "nope.env"), "--data-dir", tempDir()]);
     expect(code).toBe(EXIT.CONFIG);

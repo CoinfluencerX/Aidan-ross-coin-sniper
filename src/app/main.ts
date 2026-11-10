@@ -2,8 +2,8 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs, parseEnv as parseDotenv } from "node:util";
-import { collectSecretValues, EnvError, parseEnv, type AppEnv } from "../config/env.ts";
-import { ConfigError, loadAppConfig, type AppConfig } from "../config/load.ts";
+import { collectSecretValues, EnvError, parseEnv, testAccountsFromEnv, type AppEnv } from "../config/env.ts";
+import { ConfigError, loadAppConfig, withTestAccounts, type AppConfig } from "../config/load.ts";
 import { isMode, ModeError, resolveMode, type Mode } from "../config/mode.ts";
 import { liveReadinessProblems, PUSH_PLATFORMS, type AccountsConfig, type Platform } from "../config/schemas.ts";
 import { createLogger, type Logger } from "../log/logger.ts";
@@ -171,7 +171,7 @@ async function run(
   let config: AppConfig;
   const configDir = resolve(opts.cwd, args["config-dir"] ?? "config");
   try {
-    config = loadAppConfig(configDir);
+    config = withTestAccounts(loadAppConfig(configDir), testAccountsFromEnv(env));
   } catch (err) {
     if (err instanceof ConfigError) {
       log.error("config.invalid", { error: err.message });
@@ -612,7 +612,7 @@ function parseCli(argv: readonly string[]) {
 function liveEnvProblems(env: AppEnv, accounts: AccountsConfig): string[] {
   const required = ["RPC_HTTP_URL", "RPC_WS_URL", "WALLET_KEYPAIR_PATH", "X_BEARER_TOKEN", "TELEGRAM_BOT_TOKEN", "TELEGRAM_OWNER_CHAT_ID"] as const;
   const problems: string[] = required.filter((k) => !env[k]).map((k) => `${k} is not set in .env`);
-  if (accounts.test_accounts.x.length > 0) problems.push("test_accounts.x must be empty in live mode");
+  if (accounts.test_accounts.x.length > 0) problems.push("test accounts must be removed for live mode (TEST_X_ACCOUNTS in .env, test_accounts in accounts.yaml)");
   return problems;
 }
 

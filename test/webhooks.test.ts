@@ -1,6 +1,5 @@
 import { createHmac, generateKeyPairSync, sign } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { loadAppConfig } from "../src/config/load.ts";
 import { createLogger } from "../src/log/logger.ts";
 import { openDb } from "../src/state/db.ts";
 import {
@@ -24,9 +23,9 @@ import {
 import { SeenIds, startWebhookServer } from "../src/watch/webhook/server.ts";
 import { fakeFetch, json } from "./fake-x.ts";
 import * as F from "./fixtures/x-posts.ts";
-import { CONFIG_DIR } from "./helpers.ts";
+import { loadTestConfig } from "./helpers.ts";
 
-const config = loadAppConfig(CONFIG_DIR);
+const config = loadTestConfig();
 const NOW = Date.parse("2026-11-19T17:00:05.000Z");
 const TS = "2026-11-19T17:00:04Z";
 const ADIN_KICK = 904404;
@@ -404,7 +403,7 @@ describe("main --watch with Kick configured (fake APIs, real local HTTP)", () =>
       { id: "1511793806080819202", username: "AR15thed3mon" },
       { id: F.BANKS, username: "Banks" },
       { id: "1729276822485889024", username: "MarketBubble" },
-      { id: F.TEST, username: "Franklin_ETH1" },
+      { id: F.TEST, username: "TestPoster" },
     ];
     const { fetch: fake, calls } = fakeFetch([
       ({ url }) => (url.hostname === "id.kick.com" ? json({ access_token: "kick-app-token", expires_in: 3600 }) : undefined),

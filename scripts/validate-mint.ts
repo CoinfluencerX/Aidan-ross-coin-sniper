@@ -10,7 +10,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { parseArgs, parseEnv } from "node:util";
 import { RpcChainReader } from "../src/chain/facts.ts";
 import { SolanaRpc } from "../src/chain/rpc.ts";
-import { loadAppConfig } from "../src/config/load.ts";
+import { loadAppConfig, withTestAccounts } from "../src/config/load.ts";
 import { openDb } from "../src/state/db.ts";
 import { validate } from "../src/validate/validator.ts";
 import type { AddressSignal } from "../src/watch/signal.ts";
@@ -24,13 +24,10 @@ if (!mint) {
 const env = existsSync(".env") ? parseEnv(readFileSync(".env", "utf8")) : {};
 const url = (env.RPC_HTTP_URL ?? "").trim() || "https://api.mainnet-beta.solana.com";
 const usingPublic = !(env.RPC_HTTP_URL ?? "").trim();
-const config = loadAppConfig("config");
+// A stand-in author for the pretend post. No real account is involved.
+const config = withTestAccounts(loadAppConfig("config"), [{ handle: "stand_in_test", user_id: "1" }]);
 const sol = Number(values.sol ?? config.guardrails.buy.sol_per_buy);
-const test = config.accounts.test_accounts.x[0];
-if (!test) {
-  console.error("config/accounts.yaml needs a test account for this script");
-  process.exit(1);
-}
+const test = config.accounts.test_accounts.x.at(-1)!;
 
 // A stand-in signal, as if the dry-run test account had just posted this address.
 const now = Date.now();

@@ -15,8 +15,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { parseArgs, parseEnv as parseDotenv } from "node:util";
 import { JupiterClient } from "../src/chain/jupiter.ts";
 import { SolanaRpc } from "../src/chain/rpc.ts";
-import { parseEnv, type AppEnv } from "../src/config/env.ts";
-import { loadAppConfig, type AppConfig } from "../src/config/load.ts";
+import { parseEnv, testAccountsFromEnv, type AppEnv } from "../src/config/env.ts";
+import { loadAppConfig, withTestAccounts, type AppConfig } from "../src/config/load.ts";
 import { LIVE_TRADING_AVAILABLE } from "../src/config/mode.ts";
 import { liveReadinessProblems } from "../src/config/schemas.ts";
 import { Telegram } from "../src/control/telegram.ts";
@@ -60,10 +60,11 @@ try {
 }
 
 if (config && env) {
+  config = withTestAccounts(config, testAccountsFromEnv(env));
   const g = config.guardrails;
   const problems = liveReadinessProblems(g);
   liveOnly("guardrails", problems.length === 0, `set: ${g.buy.sol_per_buy} SOL per buy, ${g.exit.take_profit_ladder.length} take-profit steps`, problems.join("; "));
-  liveOnly("test accounts", config.accounts.test_accounts.x.length === 0, "none", `${config.accounts.test_accounts.x.length} test account(s) in accounts.yaml: fine for dry-run, must be removed for live`);
+  liveOnly("test accounts", config.accounts.test_accounts.x.length === 0, "none", `${config.accounts.test_accounts.x.length} test account(s) (TEST_X_ACCOUNTS in .env): fine for dry-run, must be removed for live`);
   liveOnly("live switch", LIVE_TRADING_AVAILABLE, "LIVE_TRADING_AVAILABLE is on", "LIVE_TRADING_AVAILABLE is off in src/config/mode.ts: live mode can't start (this is the safe default)");
   if (target === "live") add("MODE / LIVE in .env", env.MODE === "live" && env.LIVE === "1" ? "ok" : "fail", env.MODE === "live" && env.LIVE === "1" ? "MODE=live, LIVE=1" : "live also needs MODE=live and LIVE=1 in .env");
 

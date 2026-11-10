@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { ConfigError, loadAppConfig, parseYamlConfig } from "../src/config/load.ts";
+import { parseEnv, testAccountsFromEnv } from "../src/config/env.ts";
+import { ConfigError, loadAppConfig, parseYamlConfig, withTestAccounts } from "../src/config/load.ts";
 import {
   AccountsSchema,
   GuardrailsSchema,
@@ -118,5 +119,29 @@ describe("guardrails.yaml rules", () => {
 describe("parseYamlConfig", () => {
   it("rejects duplicate keys", () => {
     expect(() => parseYamlConfig("a: 1\na: 2\n", AccountsSchema, "dup.yaml")).toThrow(/YAML syntax error/);
+  });
+});
+
+describe("test accounts from .env", () => {
+  it("ships none in the public config", () => {
+    expect(loadAppConfig(CONFIG_DIR).accounts.test_accounts.x).toEqual([]);
+  });
+
+  it("reads handle:user_id pairs from TEST_X_ACCOUNTS and adds them once", () => {
+    const env = parseEnv({ TEST_X_ACCOUNTS: "TestPoster:1000000000000000001, Other_One:42" });
+    const extra = testAccountsFromEnv(env);
+    expect(extra).toEqual([
+      { handle: "TestPoster", user_id: "1000000000000000001" },
+      { handle: "Other_One", user_id: "42" },
+    ]);
+    const cfg = withTestAccounts(withTestAccounts(loadAppConfig(CONFIG_DIR), extra), extra);
+    expect(cfg.accounts.test_accounts.x).toEqual(extra);
+    expect(testAccountsFromEnv(parseEnv({}))).toEqual([]);
+  });
+
+  it("rejects a badly written TEST_X_ACCOUNTS", () => {
+    for (const bad of ["TestPoster", "TestPoster:abc", "@TestPoster:12", "a:1;b:2"]) {
+      expect(() => parseEnv({ TEST_X_ACCOUNTS: bad })).toThrow(/TEST_X_ACCOUNTS/);
+    }
   });
 });

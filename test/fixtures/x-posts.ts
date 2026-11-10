@@ -7,7 +7,7 @@
 
 export const ADIN = "759660076214853632";
 export const BANKS = "363811679";
-export const TEST = "1891923819520196610";
+export const TEST = "1000000000000000001";
 export const STRANGER = "4444444444";
 
 export const MINT = {

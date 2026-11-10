@@ -1,16 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { parseMetaplexMetadata, parseMintAccount, priceImpactBps, tokenAccountAmount, type ChainReader, type MarketFacts, type MintFacts } from "../src/chain/facts.ts";
 import { PROGRAMS } from "../src/chain/sdk.ts";
-import { loadAppConfig } from "../src/config/load.ts";
 import type { Guardrails, ValidatorConfig } from "../src/config/schemas.ts";
 import { createRedactor } from "../src/log/redact.ts";
 import { openDb } from "../src/state/db.ts";
 import { allowlistFor, dangerousExtension, recordDecisions, transferFeeBps, validate, verdictLines, type ValidatorDeps } from "../src/validate/validator.ts";
 import { recordSignal, type AddressSignal } from "../src/watch/signal.ts";
 import * as F from "./fixtures/x-posts.ts";
-import { CONFIG_DIR } from "./helpers.ts";
+import { loadTestConfig } from "./helpers.ts";
 
-const config = loadAppConfig(CONFIG_DIR);
+const config = loadTestConfig();
 const NOW = Date.parse("2026-11-19T17:00:05.000Z");
 const LAMPORTS = 10_000_000n; // 0.01 SOL
 
@@ -170,7 +169,7 @@ describe("validator: the one rule (source checks)", () => {
     const r = createRedactor([]);
     recordSignal(d.db, r, signal({ mint: F.MINT.pump, postId: "2" })); // same person
     recordSignal(d.db, r, signal({ mint: F.MINT.tco, postId: "3", accountId: "1729276822485889024", account: { userId: "1729276822485889024", handle: "MarketBubble", person: "faze_banks", tier: 2, isTest: false } }));
-    recordSignal(d.db, r, signal({ mint: F.MINT.dexPair, postId: "4", accountId: F.TEST, account: { userId: F.TEST, handle: "Franklin_ETH1", person: "test", tier: 1, isTest: true } }));
+    recordSignal(d.db, r, signal({ mint: F.MINT.dexPair, postId: "4", accountId: F.TEST, account: { userId: F.TEST, handle: "TestPoster", person: "test", tier: 1, isTest: true } }));
     expect(result(await validate(signal(), LAMPORTS, d), "cross_account_match")).toBe("pass");
   });
 

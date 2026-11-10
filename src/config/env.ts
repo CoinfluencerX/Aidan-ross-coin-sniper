@@ -45,6 +45,14 @@ export const EnvSchema = z.object({
   BASE_RPC_URL: optionalUrl,
 
   X_BEARER_TOKEN: optionalString,
+  /**
+   * Dry-run only. Your own X account(s) for rehearsals, as "handle:user_id" (comma-separated for more).
+   * Kept here, not in config/accounts.yaml, so it stays out of the public repo. Blocks live mode.
+   */
+  TEST_X_ACCOUNTS: z
+    .string()
+    .regex(/^\w{1,15}:\d{1,20}(\s*,\s*\w{1,15}:\d{1,20})*$/, 'must look like "handle:user_id" (comma-separated for more)')
+    .optional(),
   KICK_CLIENT_ID: optionalString,
   KICK_CLIENT_SECRET: optionalString,
   TWITCH_CLIENT_ID: optionalString,
@@ -90,4 +98,13 @@ export function parseEnv(raw: Record<string, string | undefined>): AppEnv {
     throw new EnvError(`Invalid .env: ${problems.join("; ")}`);
   }
   return result.data;
+}
+
+/** Test X accounts from TEST_X_ACCOUNTS, in the same shape as accounts.yaml test_accounts.x. */
+export function testAccountsFromEnv(env: Pick<AppEnv, "TEST_X_ACCOUNTS">): { handle: string; user_id: string }[] {
+  if (!env.TEST_X_ACCOUNTS) return [];
+  return env.TEST_X_ACCOUNTS.split(",").map((pair) => {
+    const [handle, user_id] = pair.trim().split(":") as [string, string];
+    return { handle, user_id };
+  });
 }

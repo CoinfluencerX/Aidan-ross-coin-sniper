@@ -4,7 +4,6 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { formatEvmAlert } from "../src/alert/console.ts";
 import { EXIT, main } from "../src/app/main.ts";
-import { loadAppConfig } from "../src/config/load.ts";
 import { decodeAbiString, locateEvmAddress, uniswapLink, type ChainPresence } from "../src/evm/locate.ts";
 import { evmAddressesIn, evmFromOcrText } from "../src/extract/evm.ts";
 import { extractFromPost } from "../src/extract/extract.ts";
@@ -16,9 +15,9 @@ import { fromActivityEvent } from "../src/watch/x/normalize.ts";
 import { buildWatchList, XWatcher } from "../src/watch/x/watcher.ts";
 import { fakeFetch, json, xApiRoutes, type Route } from "./fake-x.ts";
 import * as F from "./fixtures/x-posts.ts";
-import { CONFIG_DIR, FAKE_SECRETS, REPO_ROOT, tempDir } from "./helpers.ts";
+import { FAKE_SECRETS, loadTestConfig, REPO_ROOT, tempDir, TEST_X_ACCOUNTS_ENV } from "./helpers.ts";
 
-const config = loadAppConfig(CONFIG_DIR);
+const config = loadTestConfig();
 /** USDC on Base and on Ethereum: real, well-known contracts. */
 const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const USDC_ETH = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
@@ -176,14 +175,14 @@ describe("main --watch with a 0x post (fake X + fake chain RPC)", () => {
   it("prints one manual-buy alert and records no signal", async () => {
     const dir = tempDir();
     const envPath = join(dir, ".env");
-    writeFileSync(envPath, Object.entries(FAKE_SECRETS).map(([k, v]) => `${k}=${v}`).join("\n") + "\n");
+    writeFileSync(envPath, Object.entries({ ...FAKE_SECRETS, TEST_X_ACCOUNTS: TEST_X_ACCOUNTS_ENV }).map(([k, v]) => `${k}=${v}`).join("\n") + "\n");
     const post = F.activityEvent({ id: "1900000000000000888", author_id: F.TEST, created_at: new Date().toISOString(), text: `bot test ${USDC_BASE}` });
     const users = [
       { id: F.ADIN, username: "adinross" },
       { id: "1511793806080819202", username: "AR15thed3mon" },
       { id: F.BANKS, username: "Banks" },
       { id: "1729276822485889024", username: "MarketBubble" },
-      { id: F.TEST, username: "Franklin_ETH1" },
+      { id: F.TEST, username: "TestPoster" },
     ];
     const { fetch } = fakeFetch([evmRpc(["base"]), ...xApiRoutes({ users, activity: [post] })]);
     const lines: string[] = [];

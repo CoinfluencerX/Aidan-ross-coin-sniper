@@ -6,7 +6,6 @@ import { Engine, formatUnits, isMidMigration } from "../src/app/engine.ts";
 import { EXIT, main } from "../src/app/main.ts";
 import type { ChainReader, MarketFacts, MintFacts } from "../src/chain/facts.ts";
 import { PROGRAMS } from "../src/chain/sdk.ts";
-import { loadAppConfig } from "../src/config/load.ts";
 import { handleCommand, type ControlHooks } from "../src/control/commands.ts";
 import { parseCommand, Telegram } from "../src/control/telegram.ts";
 import type { PositionView } from "../src/exit/manager.ts";
@@ -19,9 +18,9 @@ import { fakeBuilder } from "./fake-trade.ts";
 import { fakeFetch, json, xApiRoutes, type Route } from "./fake-x.ts";
 import { OPEN_CURVE } from "./fixtures/chain.ts";
 import * as F from "./fixtures/x-posts.ts";
-import { CONFIG_DIR, FAKE_SECRETS, REPO_ROOT, SECRET_NEEDLES, tempDir } from "./helpers.ts";
+import { FAKE_SECRETS, loadTestConfig, REPO_ROOT, SECRET_NEEDLES, tempDir, TEST_X_ACCOUNTS_ENV } from "./helpers.ts";
 
-const config = loadAppConfig(CONFIG_DIR);
+const config = loadTestConfig();
 const TOKEN = FAKE_SECRETS.TELEGRAM_BOT_TOKEN;
 const OWNER = "777000111";
 
@@ -275,13 +274,13 @@ describe("main --watch with Telegram (fake APIs)", () => {
     { id: "1511793806080819202", username: "AR15thed3mon" },
     { id: F.BANKS, username: "Banks" },
     { id: "1729276822485889024", username: "MarketBubble" },
-    { id: F.TEST, username: "Franklin_ETH1" },
+    { id: F.TEST, username: "TestPoster" },
   ];
 
   async function run(api: ReturnType<typeof telegramApi>, activity: unknown[]) {
     const dir = tempDir();
     const envPath = join(dir, ".env");
-    const env = { ...FAKE_SECRETS, TELEGRAM_OWNER_CHAT_ID: OWNER, SIM_PAYER_PUBKEY: "5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9" };
+    const env = { ...FAKE_SECRETS, TEST_X_ACCOUNTS: TEST_X_ACCOUNTS_ENV, TELEGRAM_OWNER_CHAT_ID: OWNER, SIM_PAYER_PUBKEY: "5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9" };
     writeFileSync(envPath, Object.entries(env).map(([k, v]) => `${k}=${v}`).join("\n") + "\n");
     const rpcCalls: string[] = [];
     const { fetch } = fakeFetch([api.route, ...solanaRpcRoutes({ byPosition: [OPEN_CURVE, null], calls: rpcCalls }), ...xApiRoutes({ users, activity })]);
@@ -306,7 +305,7 @@ describe("main --watch with Telegram (fake APIs)", () => {
     expect(r.code).toBe(EXIT.OK);
     const texts = api.sent.map((s) => s.text);
     expect(texts[0]).toMatch(/^Sniper started in dry-run mode\. Watching 5 X accounts\. Validator on\. Buying armed\./);
-    const alert = texts.find((t) => t.includes("coin address from @Franklin_ETH1"));
+    const alert = texts.find((t) => t.includes("coin address from @TestPoster"));
     expect(alert).toContain("(TEST ACCOUNT)");
     expect(alert).toContain("BUY SIMULATED: 0.0100 SOL");
     expect(texts.at(-1)).toBe("Sniper is stopping with 1 open position(s). Nothing manages them until it's started again.");
@@ -324,7 +323,7 @@ describe("main --watch with Telegram (fake APIs)", () => {
     const delayed = { ...F.testAccountPost };
     const dir = tempDir();
     const envPath = join(dir, ".env");
-    writeFileSync(envPath, Object.entries({ ...FAKE_SECRETS, TELEGRAM_OWNER_CHAT_ID: OWNER, SIM_PAYER_PUBKEY: "5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9" }).map(([k, v]) => `${k}=${v}`).join("\n") + "\n");
+    writeFileSync(envPath, Object.entries({ ...FAKE_SECRETS, TEST_X_ACCOUNTS: TEST_X_ACCOUNTS_ENV, TELEGRAM_OWNER_CHAT_ID: OWNER, SIM_PAYER_PUBKEY: "5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9" }).map(([k, v]) => `${k}=${v}`).join("\n") + "\n");
     // Deliver the post only after the kill switch has been processed.
     const x = xApiRoutes({ users, activity: [] });
     const lateStream: Route = ({ url, signal }) => {
@@ -401,7 +400,7 @@ describe("engine: shutdown and uncertain buys (review fixes)", () => {
 });
 
 describe("main: X is down (review fix)", () => {
-  const env = { ...FAKE_SECRETS, TELEGRAM_OWNER_CHAT_ID: OWNER, SIM_PAYER_PUBKEY: "5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9" };
+  const env = { ...FAKE_SECRETS, TEST_X_ACCOUNTS: TEST_X_ACCOUNTS_ENV, TELEGRAM_OWNER_CHAT_ID: OWNER, SIM_PAYER_PUBKEY: "5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9" };
   function start(dir: string, api: ReturnType<typeof telegramApi>, lines: string[], alerts: string[], duration: string) {
     const envPath = join(dir, ".env");
     writeFileSync(envPath, Object.entries(env).map(([k, v]) => `${k}=${v}`).join("\n") + "\n");

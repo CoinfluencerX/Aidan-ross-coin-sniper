@@ -4,7 +4,6 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { EXIT, main } from "../src/app/main.ts";
 import { formatAlert } from "../src/alert/console.ts";
-import { loadAppConfig } from "../src/config/load.ts";
 import { createLogger } from "../src/log/logger.ts";
 import { openDb } from "../src/state/db.ts";
 import type { AddressSignal, Assessment } from "../src/watch/signal.ts";
@@ -25,15 +24,15 @@ import { fakeBuilder } from "./fake-trade.ts";
 import { fakeFetch, json, ndjsonStream, xApiRoutes } from "./fake-x.ts";
 import { OPEN_CURVE } from "./fixtures/chain.ts";
 import * as F from "./fixtures/x-posts.ts";
-import { CONFIG_DIR, FAKE_SECRETS, REPO_ROOT, SECRET_NEEDLES, tempDir } from "./helpers.ts";
+import { FAKE_SECRETS, loadTestConfig, REPO_ROOT, SECRET_NEEDLES, tempDir, TEST_X_ACCOUNTS_ENV } from "./helpers.ts";
 
-const config = loadAppConfig(CONFIG_DIR);
+const config = loadTestConfig();
 const ALL_USERS = [
   { id: F.ADIN, username: "adinross" },
   { id: "1511793806080819202", username: "AR15thed3mon" },
   { id: F.BANKS, username: "Banks" },
   { id: "1729276822485889024", username: "MarketBubble" },
-  { id: F.TEST, username: "Franklin_ETH1" },
+  { id: F.TEST, username: "TestPoster" },
 ];
 
 function setup(fetchFn: typeof fetch = fakeFetch([]).fetch) {
@@ -64,7 +63,7 @@ describe("watch list", () => {
   it("has every X account plus the test account in dry-run, by numeric ID", () => {
     const list = buildWatchList(config.accounts, "dry-run");
     expect(list.map((a) => a.userId)).toEqual([F.ADIN, "1511793806080819202", F.BANKS, "1729276822485889024", F.TEST]);
-    expect(list.find((a) => a.isTest)).toMatchObject({ handle: "Franklin_ETH1", tier: 1 });
+    expect(list.find((a) => a.isTest)).toMatchObject({ handle: "TestPoster", tier: 1 });
   });
 
   it("never includes test accounts in live mode", () => {
@@ -140,7 +139,7 @@ describe("XWatcher.handlePost", () => {
     const { watcher, events, signals } = setup();
     await watcher.handlePost(act(F.activityEvent({ id: "1", author_id: F.TEST, text: "gm" })), "activity", Date.now());
     expect(signals).toEqual([]);
-    expect(events().find((e) => e.event === "x.post")).toMatchObject({ handle: "Franklin_ETH1", test_account: true, text: "gm", mints: [] });
+    expect(events().find((e) => e.event === "x.post")).toMatchObject({ handle: "TestPoster", test_account: true, text: "gm", mints: [] });
   });
 
   it("hydrates media the stream didn't include, via GET /2/tweets/:id", async () => {
@@ -175,8 +174,8 @@ describe("account verification and setup", () => {
   });
 
   it("refuses when a handle no longer exists", async () => {
-    const { fetch } = fakeFetch(xApiRoutes({ users: ALL_USERS.filter((u) => u.username !== "Franklin_ETH1") }));
-    await expect(verifyWatchList(new XClient({ bearerToken: "t".repeat(20), fetch }), list, log)).rejects.toThrow(/Franklin_ETH1 was not found/);
+    const { fetch } = fakeFetch(xApiRoutes({ users: ALL_USERS.filter((u) => u.username !== "TestPoster") }));
+    await expect(verifyWatchList(new XClient({ bearerToken: "t".repeat(20), fetch }), list, log)).rejects.toThrow(/TestPoster was not found/);
   });
 
   it("creates only missing post.create subscriptions", async () => {
@@ -184,7 +183,7 @@ describe("account verification and setup", () => {
       xApiRoutes({ users: ALL_USERS, existingSubscriptions: [{ subscription_id: "1", event_type: "post.create", filter: { user_id: F.ADIN } }] }),
     );
     const { created } = await ensureActivitySubscriptions(new XClient({ bearerToken: "t".repeat(20), fetch }), list, log);
-    expect(created).toEqual(["AR15thed3mon", "Banks", "MarketBubble", "Franklin_ETH1"]);
+    expect(created).toEqual(["AR15thed3mon", "Banks", "MarketBubble", "TestPoster"]);
     const posts = calls.filter((c) => c.method === "POST");
     expect(posts[0]!.body).toEqual({ event_type: "post.create", filter: { user_id: "1511793806080819202" }, tag: `${RULE_TAG}:AR15thed3mon` });
   });
@@ -197,14 +196,14 @@ describe("account verification and setup", () => {
         users: ALL_USERS,
         existingSubscriptions: [
           ...live.map((a, i) => sub(String(i + 1), a.userId, `${RULE_TAG}:${a.handle}`)),
-          sub("90", F.TEST, `${RULE_TAG}:Franklin_ETH1`),
+          sub("90", F.TEST, `${RULE_TAG}:TestPoster`),
           sub("91", "999", "some-other-tool"),
           sub("92", "998"),
         ],
       }),
     );
     const r = await ensureActivitySubscriptions(new XClient({ bearerToken: "t".repeat(20), fetch }), live, log);
-    expect(r).toEqual({ created: [], removed: ["Franklin_ETH1"] });
+    expect(r).toEqual({ created: [], removed: ["TestPoster"] });
     expect(calls.filter((c) => c.method === "DELETE").map((c) => new URL(c.url).pathname)).toEqual(["/2/activity/subscriptions/90"]);
   });
 
@@ -290,7 +289,7 @@ describe("main --watch (fake X API end to end)", () => {
   const SIM_PAYER = "5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9";
   function envFile(dir: string, extra: Record<string, string> = {}) {
     const path = join(dir, ".env");
-    writeFileSync(path, Object.entries({ LOG_LEVEL: "debug", ...FAKE_SECRETS, ...extra }).map(([k, v]) => `${k}=${v}`).join("\n") + "\n");
+    writeFileSync(path, Object.entries({ LOG_LEVEL: "debug", ...FAKE_SECRETS, TEST_X_ACCOUNTS: TEST_X_ACCOUNTS_ENV, ...extra }).map(([k, v]) => `${k}=${v}`).join("\n") + "\n");
     return path;
   }
 
@@ -320,7 +319,7 @@ describe("main --watch (fake X API end to end)", () => {
     expect(r.code).toBe(EXIT.OK);
     expect(r.alerts).toHaveLength(1);
     expect(r.alerts[0]).toContain(F.MINT.plain);
-    expect(r.alerts[0]).toContain("@Franklin_ETH1 (TEST ACCOUNT");
+    expect(r.alerts[0]).toContain("@TestPoster (TEST ACCOUNT");
     // Validated against the fake chain, then bought on paper: built, signed and simulated, never sent.
     // Yellow, not green: the fake chain has no name metadata for the token, which is a warning.
     expect(r.alerts[0]).toContain("YELLOW");
@@ -412,7 +411,7 @@ describe("alert banner", () => {
       postId: "1",
       postUrl: "https://x.com/a/status/1",
       accountId: F.TEST,
-      account: { userId: F.TEST, handle: "Franklin_ETH1", person: "test", tier: 1, isTest: true },
+      account: { userId: F.TEST, handle: "TestPoster", person: "test", tier: 1, isTest: true },
       postKind: "original",
       referencesWatchedAuthor: false,
       origins: [{ kind: "text" }],

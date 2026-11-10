@@ -1,6 +1,6 @@
 /**
  * Look up X accounts' numeric IDs through the official API, for accounts.yaml.
- *   node scripts/x-lookup-user.ts franklin_eth1 [more handles…]
+ *   node scripts/x-lookup-user.ts yourhandle [more handles…]
  * Reads X_BEARER_TOKEN from .env (or the environment) inside this process and prints
  * only public profile fields. The token is never printed.
  */

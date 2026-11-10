@@ -26,7 +26,7 @@ The watcher needs `X_BEARER_TOKEN` in `.env`. It reads addresses in images only 
 - GitHub secret scanning and push protection are on as a second net.
 - The bot's logs redact every secret. Still, **never show `.env` on screen**. If a key ever appears in a recording, revoke and regenerate it.
 
-Live mode is locked. It needs `--mode live` **and** `MODE=live` + `LIVE=1` in `.env`, guardrails with `status: set`, a take-profit ladder and at least one stop, a wallet, Telegram, and an empty `test_accounts` list. Even with all of that it stays refused while `LIVE_TRADING_AVAILABLE` in `src/config/mode.ts` is `false`, which only the owner changes.
+Live mode is locked. It needs `--mode live` **and** `MODE=live` + `LIVE=1` in `.env`, guardrails with `status: set`, a take-profit ladder and at least one stop, a wallet, Telegram, and no test accounts. Even with all of that it stays refused while `LIVE_TRADING_AVAILABLE` in `src/config/mode.ts` is `false`, which only the owner changes.
 
 ## The one rule
 
@@ -74,7 +74,7 @@ node scripts/telegram-chat-id.ts          # find your Telegram chat id
 Put every secret into `.env` yourself (copy from `.env.example`). Never paste keys into chat or commit them. Details for each step are in the [runbook](docs/RUNBOOK.md).
 
 - [x] X developer account and bearer token
-- [x] Test X account allowlisted for dry-run
+- [x] Test X account for dry-run (`TEST_X_ACCOUNTS` in `.env`, so it stays out of this repo)
 - [ ] **Solana RPC** (`RPC_HTTP_URL`, `RPC_WS_URL`). Until it's set, the validator and executor are off.
 - [ ] **Guardrail numbers**: SOL per buy, max slippage, take-profit ladder, stops. The shipped file never sells.
 - [ ] **Telegram bot** and your chat id, for alerts and `/sell` `/kill`.
