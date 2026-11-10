@@ -11,13 +11,13 @@ buy:
   sol_per_buy: 0.01
   max_slippage_bps: 1500                 # 1500 bps = 15%
   priority_fee_micro_lamports: 100000
-  jito_tip_lamports: 100000
+  jito_tip_lamports: 100000              # NOT USED YET: no Jito tip is added (see docs/EXECUTOR.md)
   max_entry_mcap_usd: null               # null = no cap
   max_price_multiple_vs_first_trade: null
   max_open_positions: 1                  # one buy only
 
 confirmation:
-  first_signal_fraction: 1.0             # 1.0 = full size on the first official post. Below 1 = the rest waits for a second source
+  first_signal_fraction: 1.0             # share of sol_per_buy to buy on the first official post. NOTE: the top-up on a second source is NOT built, so below 1.0 just buys less
   second_source_window_seconds: 120
 
 exit:

@@ -42,10 +42,10 @@ M3  [EXECUTOR DONE 2026-11-09, pre-warm listener not built] Pre-warm listener (g
     both succeed, and the time from signal to signed tx is under 100 ms.
 M4  [DONE 2026-11-10] Exit manager + Telegram control. Verify: replay a recorded price series
     and assert each take-profit/stop rule fires at the right point.
-M5  End-to-end dry run: I post an existing pump.fun token's address from my
+M5  [WAITING ON OWNER: needs RPC_HTTP_URL and a test post] End-to-end dry run: I post an existing pump.fun token's address from my
     test X account, and the bot detects, validates, simulates and alerts.
     Report post-to-signed-tx latency.
-M6  Launch-day ops: Dockerfile + VPS deploy steps, RUNBOOK.md (start, watch,
+M6  [WRITTEN 2026-11-10: runbook, pre-flight, Dockerfile (untested). VPS deploy is the owner's] Launch-day ops: Dockerfile + VPS deploy steps, RUNBOOK.md (start, watch,
     kill, recover), and a pre-flight script that checks RPC, gRPC, X stream,
     Telegram and wallet balance.
 

@@ -189,6 +189,25 @@ describe("account verification and setup", () => {
     expect(posts[0]!.body).toEqual({ event_type: "post.create", filter: { user_id: "1511793806080819202" }, tag: `${RULE_TAG}:AR15thed3mon` });
   });
 
+  it("in live mode, removes our subscription for the test account and leaves other apps' subscriptions alone", async () => {
+    const live = buildWatchList(config.accounts, "live");
+    const sub = (id: string, user: string, tag?: string) => ({ subscription_id: id, event_type: "post.create", filter: { user_id: user }, ...(tag ? { tag } : {}) });
+    const { fetch, calls } = fakeFetch(
+      xApiRoutes({
+        users: ALL_USERS,
+        existingSubscriptions: [
+          ...live.map((a, i) => sub(String(i + 1), a.userId, `${RULE_TAG}:${a.handle}`)),
+          sub("90", F.TEST, `${RULE_TAG}:Franklin_ETH1`),
+          sub("91", "999", "some-other-tool"),
+          sub("92", "998"),
+        ],
+      }),
+    );
+    const r = await ensureActivitySubscriptions(new XClient({ bearerToken: "t".repeat(20), fetch }), live, log);
+    expect(r).toEqual({ created: [], removed: ["Franklin_ETH1"] });
+    expect(calls.filter((c) => c.method === "DELETE").map((c) => new URL(c.url).pathname)).toEqual(["/2/activity/subscriptions/90"]);
+  });
+
   it("leaves a matching stream rule alone, replaces a stale one", async () => {
     const value = streamRuleValue(list);
     const same = fakeFetch(xApiRoutes({ users: [], existingRules: [{ id: "r1", value, tag: RULE_TAG }] }));

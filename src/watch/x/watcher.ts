@@ -53,9 +53,25 @@ export async function verifyWatchList(client: XClient, list: readonly WatchedAcc
   log.info("x.accounts.verified", { count: list.length, handles: list.map((a) => a.handle) });
 }
 
-/** Creates post.create subscriptions for any watched ID that doesn't have one. Safe to re-run. */
+/**
+ * Creates post.create subscriptions for any watched ID that doesn't have one, and removes OUR
+ * subscriptions (tagged "gta6-sniper:…") for accounts that are no longer watched. That's what
+ * drops the dry-run test account when the bot is started in live mode: X bills per delivered
+ * post, so a leftover subscription would cost money for posts the bot ignores. Safe to re-run.
+ */
 export async function ensureActivitySubscriptions(client: XClient, list: readonly WatchedAccount[], log: Logger) {
   const existing = await client.listActivitySubscriptions();
+  const watched = new Set(list.map((a) => a.userId));
+  const removed: string[] = [];
+  for (const s of existing) {
+    if (!s.tag?.startsWith(`${RULE_TAG}:`) || !s.filter.user_id || watched.has(s.filter.user_id)) continue;
+    try {
+      await client.deleteActivitySubscription(s.subscription_id);
+      removed.push(s.tag.slice(RULE_TAG.length + 1));
+    } catch (err) {
+      log.warn("x.activity.unsubscribe_failed", { tag: s.tag, error: (err as Error).message });
+    }
+  }
   const have = new Set(existing.filter((s) => s.event_type === "post.create").map((s) => s.filter.user_id));
   const created: string[] = [];
   for (const a of list) {
@@ -69,8 +85,8 @@ export async function ensureActivitySubscriptions(client: XClient, list: readonl
       throw err;
     }
   }
-  log.info("x.activity.subscriptions", { existing: have.size, created });
-  return { created };
+  log.info("x.activity.subscriptions", { existing: have.size, created, removed });
+  return { created, removed };
 }
 
 export function streamRuleValue(list: readonly WatchedAccount[]): string {

@@ -129,6 +129,10 @@ export class XClient {
     return Array.isArray(r.data) ? r.data[0] : r.data;
   }
 
+  async deleteActivitySubscription(subscriptionId: string): Promise<void> {
+    await this.request("DELETE", `/2/activity/subscriptions/${encodeURIComponent(subscriptionId)}`);
+  }
+
   async getStreamRules(): Promise<StreamRule[]> {
     const r = await this.request<{ data?: StreamRule[] }>("GET", "/2/tweets/search/stream/rules");
     return r.data ?? [];

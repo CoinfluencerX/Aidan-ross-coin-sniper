@@ -73,7 +73,7 @@ export function xApiRoutes(opts: {
   filtered?: unknown[];
   activityStatus?: number;
   filteredStatus?: number;
-  existingSubscriptions?: { subscription_id: string; event_type: string; filter: { user_id: string } }[];
+  existingSubscriptions?: { subscription_id: string; event_type: string; filter: { user_id: string }; tag?: string }[];
   existingRules?: { id: string; value: string; tag?: string }[];
 }): Route[] {
   return [
@@ -83,6 +83,7 @@ export function xApiRoutes(opts: {
         return json({ data: opts.users.filter((u) => wanted.includes(u.username.toLowerCase())) });
       }
     },
+    ({ method, url }) => (method === "DELETE" && url.pathname.startsWith("/2/activity/subscriptions/") ? json({ data: { deleted: true } }) : undefined),
     ({ method, url, body }) => {
       if (url.pathname !== "/2/activity/subscriptions") return;
       if (method === "GET") return json({ data: opts.existingSubscriptions ?? [], meta: {} });

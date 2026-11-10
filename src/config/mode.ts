@@ -3,8 +3,9 @@ import type { AppEnv } from "./env.ts";
 export type Mode = "dry-run" | "live";
 
 /**
- * Flipped to true only once the executor milestone (M3+) ships and the owner has
- * run the live tests themselves. Until then the bot refuses to start in live mode.
+ * The master switch for real trading. While this is false the bot refuses to start in live
+ * mode, whatever .env and the command line say. Only the owner turns it on, after the guardrails
+ * session and their own live tests. Nobody else, and no automated step, should change it.
  */
 export const LIVE_TRADING_AVAILABLE = false;
 
@@ -35,7 +36,7 @@ export function resolveMode(
   }
   if (!liveAvailable) {
     throw new ModeError(
-      "Live mode isn't available yet: the executor ships in M3. Use --mode dry-run.",
+      "Live mode isn't available yet: it is switched off in code (LIVE_TRADING_AVAILABLE in src/config/mode.ts). Use --mode dry-run.",
     );
   }
   return "live";

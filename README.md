@@ -2,7 +2,7 @@
 
 A Solana sniper that buys the coin Adin Ross and FaZe Banks have talked about launching for their GTA 6 roleplay server. It buys **the moment the contract address is posted from one of their official accounts**, then sells on preset % gain rules.
 
-> **Status:** Watcher (M1), validator (M2), executor (M3, simulate only) and exit manager with Telegram control (M4) are built and tested. In dry-run the bot catches an official post, validates the token, simulates the buy, then manages a paper position by the sell rules. It cannot send a real transaction: dry-run has no sender, and live mode is switched off in code. Guardrail numbers are still placeholders. GTA 6 releases **Nov 19, 2026**. Target: launch-ready by **Nov 17**.
+> **Status (Nov 10):** all four parts are built and tested: watcher, validator, executor and exit manager, plus Telegram control. In dry-run the bot catches an official post, validates the token, simulates the buy, and manages a paper position by the sell rules. **It cannot trade real money yet**: dry-run has no sender, live mode is switched off in code, and the guardrail numbers are still placeholders. What's left is on the [launch checklist](#whats-left-before-launch). GTA 6 releases **Nov 19, 2026**. Target: launch-ready by **Nov 17**.
 
 ## Quick start
 
@@ -26,7 +26,7 @@ The watcher needs `X_BEARER_TOKEN` in `.env`. It reads addresses in images only 
 - GitHub secret scanning and push protection are on as a second net.
 - The bot's logs redact every secret. Still, **never show `.env` on screen**. If a key ever appears in a recording, revoke and regenerate it.
 
-Live mode is locked. It needs `--mode live` **and** `MODE=live` + `LIVE=1` in `.env`, real (non-placeholder) guardrails, and a wallet and Telegram setup. Even then it stays refused until the executor ships in M3.
+Live mode is locked. It needs `--mode live` **and** `MODE=live` + `LIVE=1` in `.env`, guardrails with `status: set`, a take-profit ladder and at least one stop, a wallet, Telegram, and an empty `test_accounts` list. Even with all of that it stays refused while `LIVE_TRADING_AVAILABLE` in `src/config/mode.ts` is `false`, which only the owner changes.
 
 ## The one rule
 
@@ -36,48 +36,63 @@ Copycat tokens with the same name and ticker show up within seconds of any celeb
 
 ## How it works
 
-| Part | Job |
-|---|---|
-| **Watcher** | Watches every official account (X, Kick, Telegram, IG, TikTok, YouTube…) and pulls the address out of text, links or images. |
-| **Validator** | Checks it's the real token, that we can sell it, and that the buy is within our limits. Not a buy/no-buy judgment. [Spec](docs/VALIDATOR.md) |
-| **Executor** | Buys through pump.fun, PumpSwap or Jupiter, with priority fee + Jito, sent on several paths at once. One buy only. |
-| **Exit manager** | Sells at take-profit % targets, with a trailing stop, stop-loss and time limit. |
-| **Control** | Telegram alerts, plus `/status` `/sell` `/kill`. |
+| Part | Job | State |
+|---|---|---|
+| **Watcher** | Watches the official accounts and pulls the address out of text, links or images. X by live stream; Kick (the streamer's own chat messages and stream title) and Twitch (stream title) by signed webhooks. | X verified live. Kick and Twitch tested with fakes; they need the server for a live test. |
+| **Validator** | Checks it's the real token, that we can sell it (including a simulated buy-then-sell), and that the buy is within our limits. Not a buy/no-buy judgment. [Spec](docs/VALIDATOR.md) | Verified on mainnet tokens. |
+| **Executor** | One buy per coin, ever. pump.fun curve, PumpSwap or Jupiter. Dry-run builds, signs and simulates; it cannot send. [Details](docs/EXECUTOR.md) | Simulated buys verified on mainnet. Live sending is written but has never been run. |
+| **Exit manager** | Sells by the rules in `guardrails.yaml`: take-profit ladder, trailing stop, stop-loss, time limit, deleted post, pulled liquidity, creator selling. [Details](docs/EXIT.md) | Verified by replaying price series. |
+| **Control** | Telegram alerts, plus `/status` `/sell` `/kill` `/arm`. No command can buy. | Tested with a fake Telegram. |
+| **`0x…` addresses** | If an official account posts an Ethereum-style address, the bot finds the chain and alerts with a Uniswap link. It never buys these. | Chain lookup verified on Ethereum and Base. |
 
 Full design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ## Docs
 
+- [Runbook](docs/RUNBOOK.md): set up, rehearse, go live, recover
 - [Architecture](docs/ARCHITECTURE.md)
-- [Validator spec](docs/VALIDATOR.md)
-- [Build prompt](docs/BUILD_PROMPT.md): paste it into Claude Code to start building
+- [Validator](docs/VALIDATOR.md)
+- [Executor](docs/EXECUTOR.md)
+- [Exit manager and Telegram](docs/EXIT.md)
+- [Build prompt](docs/BUILD_PROMPT.md)
 - [Research: past celebrity token launches](docs/research/past-celebrity-launches.md)
 - [Research: official accounts + background](docs/research/accounts-and-background.md)
 - [Watched accounts config](config/accounts.yaml)
 
-## Setup checklist (what you provide)
+## Useful commands
 
-Put every secret into `.env` yourself (copy from `.env.example`). Never paste keys into chat or commit them.
+```bash
+node scripts/preflight.ts --notify        # is everything ready? (read-only)
+npm start -- --watch                      # run the bot in dry-run
+node scripts/validate-mint.ts <mint> --no-sim                          # run the validator on any coin
+node scripts/simulate-trade.ts <mint> --payer <public address with SOL>   # validate + simulated buy + sell quote
+node scripts/telegram-chat-id.ts          # find your Telegram chat id
+```
 
-- [ ] **X developer account** with pay-per-use credits, for the Activity API `post.create` (~$0.005/event) plus Filtered Stream. Bearer token goes in `.env`.
-- [ ] **Your test X account**: the handle, so it can be allowlisted for the dry run.
-- [ ] **Solana RPC** with websocket + Yellowstone gRPC (Helius / Triton / QuickNode). URLs and keys go in `.env`.
-- [ ] **New burner wallet**: create it yourself (`solana-keygen new -o ~/sniper-wallet.json`), store it outside this repo, and fund it only with what you're willing to lose. Path goes in `.env`.
-- [ ] **Telegram bot** from @BotFather, plus your chat ID, for alerts and control.
-- [ ] **Kick developer app** (optional), to watch stream titles and Adin's own chat messages.
-- [ ] **Launch-day host**: your Mac or a VPS (a VPS is recommended).
-- [ ] **Guardrail numbers** (SOL per buy, max slippage, max entry market cap, take-profit ladder, stops). We'll set these together during the build.
+## What's left before launch
 
-## Timeline
+Put every secret into `.env` yourself (copy from `.env.example`). Never paste keys into chat or commit them. Details for each step are in the [runbook](docs/RUNBOOK.md).
 
-| Date | Milestone |
-|---|---|
-| Nov 9–10 | M0 scaffold, M1 extraction + X watcher |
-| Nov 11–12 | M2 validator, M3 pre-warm + simulated executor |
-| Nov 13–14 | M4 exit manager + Telegram |
-| Nov 15–16 | M5 dry run with your test X account, then your own tiny live test |
-| Nov 17 | M6 VPS deploy, runbook, pre-flight |
-| Nov 19 | GTA 6 launch |
+- [x] X developer account and bearer token
+- [x] Test X account allowlisted for dry-run
+- [ ] **Solana RPC** (`RPC_HTTP_URL`, `RPC_WS_URL`). Until it's set, the validator and executor are off.
+- [ ] **Guardrail numbers**: SOL per buy, max slippage, take-profit ladder, stops. The shipped file never sells.
+- [ ] **Telegram bot** and your chat id, for alerts and `/sell` `/kill`.
+- [ ] **Bot wallet**: `solana-keygen new -o ~/sniper-wallet.json`, kept outside the repo, funded only with what you can lose.
+- [ ] **Server** with an https address, for 24/7 running and for Kick and Twitch.
+- [ ] **Kick and Twitch developer apps** (free).
+- [ ] **Rehearsal**: post a live pump.fun coin's address from the test account and watch the paper trade.
+- [ ] **Your own small live test**, then launch day.
+
+## Known gaps
+
+- **Live sending has never been run.** It's tested only against fakes. Your small live test is its first real run.
+- **No Jito tip and no pre-warm cache.** The buy goes out through the RPC (and Jito's plain endpoint if configured). See [Executor](docs/EXECUTOR.md).
+- **Speed:** about 0.75–0.85 s from signal to signed transaction on Solana's slow public RPC. Re-measure on your own RPC. X itself took about 4.7 s to deliver the test post.
+- **Jupiter-routed coins** (not launched on pump.fun): the sell is quoted, not simulated, before buying.
+- **`first_signal_fraction` below 1 just buys less.** Topping up on a second source isn't built.
+- **Dependencies:** `npm audit` reports 15 advisories (8 moderate, 7 high, 0 critical) in the official Solana and pump.fun SDKs' dependency tree. None is in code this bot calls with outside input, but they're unpatched upstream.
+- **Dockerfile is untested.**
 
 ## Risk notes
 
