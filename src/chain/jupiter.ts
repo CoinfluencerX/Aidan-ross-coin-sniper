@@ -1,5 +1,5 @@
 import type { FetchFn } from "../extract/expand.ts";
-import { PROGRAMS } from "./sdk.ts";
+import { PROGRAMS } from "./programs.ts";
 
 /**
  * Jupiter's public HTTP API: SOL price, and a swap route for tokens that aren't on pump.fun

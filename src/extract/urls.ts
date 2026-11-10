@@ -80,7 +80,13 @@ export function mintsFromUrl(url: string): UrlMint[] {
   } catch {
     return [];
   }
-  const haystack = decodeURIComponent(parsed.pathname + " " + parsed.search);
+  // A stray "%" in a link makes decodeURIComponent throw. Fall back to the raw text rather than lose the post.
+  let haystack = parsed.pathname + " " + parsed.search;
+  try {
+    haystack = decodeURIComponent(haystack);
+  } catch {
+    // keep the undecoded text
+  }
   const out: UrlMint[] = [];
   for (const m of haystack.matchAll(ADDRESS_CANDIDATE)) {
     if (isPubkey(m[0]) && !out.some((o) => o.mint === m[0])) {

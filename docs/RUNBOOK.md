@@ -67,7 +67,7 @@ npm start -- --watch
 
 Stop with Ctrl-C (once: it shuts down cleanly; twice forces it). For a fixed run add `--duration 600`.
 
-Healthy start-up, in order: `x.accounts.verified`, `executor.ready` with `"can_send": false`, `watch.started` showing `validator: on`, `executor: simulate only`, `exit_manager: on`, then two `x.stream.connected` lines.
+Healthy start-up, in order: `executor.ready` with `"can_send": false`, `x.accounts.verified`, `watch.started` showing `validator: on`, `executor: simulate only`, `exit_manager: on`, then two `x.stream.connected` lines. Those last two show up about 20 seconds after `watch.started`.
 
 To keep it running on the server, use a systemd unit (`/etc/systemd/system/sniper.service`):
 
@@ -87,7 +87,7 @@ User=sniper
 WantedBy=multi-user.target
 ```
 
-`Restart=always` is safe: the buy lock is in the database, so a restart can't buy a coin twice, and the exit manager picks open positions back up. A Dockerfile is in the repo too, but it has **not been built or run yet**.
+`Restart=always` is safe: the buy lock is in the database, so a restart can't buy a coin twice. On start the bot first settles any buy that was in flight when it stopped (by reading the wallet), then picks open positions back up. If X can't be reached while a position is open, it stays running to manage that position instead of exiting. A Dockerfile is in the repo too, but it has **not been built or run yet**.
 
 ## 4. Rehearse
 
@@ -126,6 +126,8 @@ Starting in live mode also removes the bot's X subscription for the test account
 |---|---|
 | Green alert, `VALIDATOR: PASS`, `BOUGHT` | It bought. The exit manager is now watching the position |
 | Red alert, `VALIDATOR: BLOCKED` | It did not buy. The lines marked ✗ say why |
+| `BUY SENT, RESULT UNKNOWN` | Live only. The buy went out but the bot can't yet tell if it landed. It keeps checking the wallet and will message you. Look at the wallet yourself too |
+| `X can't be watched … Still managing N open position(s)` | X is down or the token stopped working. Nothing new will be bought, but the sell rules and `/sell` still run. Fix X and restart |
 | `BUY FAILED … This mint is now locked` | The buy didn't go through and the bot will **not** retry that coin. Buy by hand if you still want it |
 | `BUY SKIPPED: another position is still open` | `max_open_positions` is reached |
 | `ETHEREUM-STYLE ADDRESS: BUY BY HAND` | A `0x…` address was posted. The bot doesn't buy these. Use the Uniswap link |
@@ -142,7 +144,8 @@ Telegram: `/status`, `/sell`, `/sell 3`, `/kill` (stop buying), `/arm`, `/help`.
 ## 8. Recovering
 
 - **It crashed or the server rebooted:** start it again. Open positions resume. The same coin can't be bought twice.
-- **A position shows `failed`:** the buy errored or wasn't confirmed, and that coin is locked for good. In live mode check the wallet on Solscan: if tokens did arrive, the bot would have opened the position instead.
+- **A position shows `failed`:** the buy errored before sending, failed on chain, or expired with an empty wallet. That coin is locked for good.
+- **A position shows `pending`:** a buy was sent and its result isn't known yet. The bot keeps reading the wallet and opens or fails it. Check the wallet on Solscan yourself.
 - **You sold by hand:** the bot will try to sell, find nothing, and close the position.
 - **See what the bot knows** (read-only):
 

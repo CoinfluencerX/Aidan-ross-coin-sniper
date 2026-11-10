@@ -384,3 +384,29 @@ describe("verdict summary lines", () => {
     expect(text).toContain("Adin Ross RP (ADIN) · pump_curve");
   });
 });
+
+describe("validator: stream titles (review fix)", () => {
+  const kick = (path: string) =>
+    signal({ source: "kick", path, accountId: "904404", account: { userId: "904404", handle: "adinross", person: "adin_ross", tier: 1, isTest: false }, postUrl: "https://kick.com/adinross" });
+
+  it("blocks an address that came from a stream title, since editors and mods can change titles", async () => {
+    for (const path of ["livestream.metadata.updated", "livestream.status.updated"]) {
+      const v = await validate(kick(path), LAMPORTS, deps());
+      expect(v.decision).toBe("blocked");
+      expect(v.blocks.map((b) => b.id)).toEqual(["title_source"]);
+    }
+    const twitch = signal({ source: "twitch", path: "channel.update", accountId: "59299632", account: { userId: "59299632", handle: "adinross", person: "adin_ross", tier: 1, isTest: false } });
+    expect((await validate(twitch, LAMPORTS, deps())).blocks.map((b) => b.id)).toEqual(["title_source"]);
+  });
+
+  it("still buys from the streamer's own Kick chat message, and from X", async () => {
+    expect((await validate(kick("chat.message.sent"), LAMPORTS, deps())).decision).toBe("buy");
+    expect(result(await validate(signal(), LAMPORTS, deps()), "title_source")).toBe("pass");
+  });
+
+  it("the owner can relax it to a warning in validator.yaml", async () => {
+    const v = await validate(kick("livestream.metadata.updated"), LAMPORTS, deps({ config: withChecks({ title_source: "warn" }) }));
+    expect(v.decision).toBe("buy");
+    expect(v.warns.map((w) => w.id)).toEqual(["title_source"]);
+  });
+});

@@ -208,3 +208,11 @@ describe("expandUrl", () => {
     expect(await expandUrl("https://t.co/loop", { fetch: loop, maxHops: 3 })).toBe("https://t.co/loop");
   });
 });
+
+describe("links with a stray % (review fix)", () => {
+  it("doesn't throw on a token link that isn't valid percent-encoding", () => {
+    const mint = "En8Ltt7MV1nhqTnUFecEzo5Fxbqy8XspwvCHmx6yeHJy";
+    expect(() => mintsFromUrl(`https://pump.fun/coin/${mint}?ref=100%`)).not.toThrow();
+    expect(mintsFromUrl(`https://pump.fun/coin/${mint}?ref=100%`).map((m) => m.mint)).toEqual([mint]);
+  });
+});

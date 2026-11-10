@@ -179,6 +179,7 @@ export const ValidatorSchema = z.strictObject({
     warning_post_filter: Level,
     single_address: Level,
     post_age: Level,
+    title_source: Level,
     // address
     valid_pubkey: Core,
     is_mint: Core,

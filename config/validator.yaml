@@ -14,6 +14,7 @@ checks:
   warning_post_filter: warn
   single_address: block            # a post with two different addresses is ambiguous
   post_age: warn                   # the post reached us late (see max_post_age_seconds)
+  title_source: block              # address came from a Kick/Twitch stream TITLE. Channel editors, mods and bots can change a title, so by default it never buys alone
   # address
   valid_pubkey: block              # core
   is_mint: block                   # core

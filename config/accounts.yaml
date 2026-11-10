@@ -17,14 +17,14 @@ people:
         tier: 2
     kick:
       - slug: adinross
-        user_id: 904404             # his main platform; watch his own chat messages + stream title
+        user_id: 904404             # his main platform; his own chat messages can buy, stream-title addresses only alert (title_source)
         channel_id: 875396
         chatroom_id: 875062
         tier: 1
     twitch:
       - login: adinross
         user_id: "59299632"
-        tier: 1                     # title / go-live events only
+        tier: 1                     # title / go-live events only. Title addresses alert but don't buy unless validator.yaml title_source is relaxed
     youtube:
       - name: Adin Live
         channel_id: UCey-eDTR5J6xU6pZ2f4guoA

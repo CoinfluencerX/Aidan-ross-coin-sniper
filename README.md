@@ -38,7 +38,7 @@ Copycat tokens with the same name and ticker show up within seconds of any celeb
 
 | Part | Job | State |
 |---|---|---|
-| **Watcher** | Watches the official accounts and pulls the address out of text, links or images. X by live stream; Kick (the streamer's own chat messages and stream title) and Twitch (stream title) by signed webhooks. | X verified live. Kick and Twitch tested with fakes; they need the server for a live test. |
+| **Watcher** | Watches the official accounts and pulls the address out of text, links or images. X by live stream; Kick (the streamer's own chat messages and stream title) and Twitch (stream title) by signed webhooks. An address in a stream **title** is alerted but not bought by default, because mods and editors can change titles. | X verified live. Kick and Twitch tested with fakes; they need the server for a live test. |
 | **Validator** | Checks it's the real token, that we can sell it (including a simulated buy-then-sell), and that the buy is within our limits. Not a buy/no-buy judgment. [Spec](docs/VALIDATOR.md) | Verified on mainnet tokens. |
 | **Executor** | One buy per coin, ever. pump.fun curve, PumpSwap or Jupiter. Dry-run builds, signs and simulates; it cannot send. [Details](docs/EXECUTOR.md) | Simulated buys verified on mainnet. Live sending is written but has never been run. |
 | **Exit manager** | Sells by the rules in `guardrails.yaml`: take-profit ladder, trailing stop, stop-loss, time limit, deleted post, pulled liquidity, creator selling. [Details](docs/EXIT.md) | Verified by replaying price series. |
@@ -85,6 +85,8 @@ Put every secret into `.env` yourself (copy from `.env.example`). Never paste ke
 - [ ] **Your own small live test**, then launch day.
 
 ## Known gaps
+
+An independent review of the safety-critical code on Nov 10 found ten issues, mostly in how a live trade's outcome was recorded. All ten are fixed and covered by tests.
 
 - **Live sending has never been run.** It's tested only against fakes. Your small live test is its first real run.
 - **No Jito tip and no pre-warm cache.** The buy goes out through the RPC (and Jito's plain endpoint if configured). See [Executor](docs/EXECUTOR.md).

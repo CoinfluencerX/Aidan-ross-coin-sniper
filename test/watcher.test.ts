@@ -432,3 +432,48 @@ describe("alert banner", () => {
     expect(plain).toContain("post → watcher 1.50 s");
   });
 });
+
+describe("reposts (review fix)", () => {
+  const post = (extra: object) => act(F.activityEvent({ id: "1900000000000000555", author_id: F.ADIN, created_at: "2026-11-19T17:00:00.000Z", ...extra }));
+
+  it("a tier-1 repost of a TIER-2 account does not count as an allowlisted repost", async () => {
+    const { watcher, signals } = setup();
+    const tier2 = "1511793806080819202"; // AR15thed3mon
+    const p = fromFilteredStream(F.streamMessage({ id: "1900000000000000556", author_id: F.ADIN, text: `RT @AR15thed3mon: ${F.MINT.plain}`, referenced_tweets: [{ type: "retweeted", id: "77" }] }, { tweets: [{ id: "77", author_id: tier2 }] }))!;
+    await watcher.handlePost(p, "filtered_stream", 0);
+    expect(signals[0]!.s).toMatchObject({ postKind: "repost", referencesWatchedAuthor: false });
+    expect(signals[0]!.a.severity).toBe("red");
+  });
+
+  it("a tier-1 repost of the other tier-1 account does count", async () => {
+    const { watcher, signals } = setup();
+    const p = fromFilteredStream(F.streamMessage({ id: "1900000000000000557", author_id: F.ADIN, text: `RT @Banks: ${F.MINT.plain}`, referenced_tweets: [{ type: "retweeted", id: "78" }] }, { tweets: [{ id: "78", author_id: F.BANKS }] }))!;
+    await watcher.handlePost(p, "filtered_stream", 0);
+    expect(signals[0]!.s).toMatchObject({ postKind: "repost", referencesWatchedAuthor: true });
+  });
+
+  it("'RT @name:' text with no reference data is looked up, and is a repost of a stranger unless proven otherwise", async () => {
+    // The lookup fails (fake API has no such post): treated as a repost of an unknown author.
+    const blind = setup();
+    await blind.watcher.handlePost(post({ text: `RT @someguy: real CA ${F.MINT.plain}` }), "activity", 0);
+    expect(blind.signals[0]!.s).toMatchObject({ postKind: "repost", referencesWatchedAuthor: false });
+    expect(blind.signals[0]!.a.severity).toBe("red");
+
+    // The lookup succeeds and shows it reposts Banks.
+    const lookup = fakeFetch([
+      ({ url }) =>
+        url.pathname === "/2/tweets/1900000000000000555"
+          ? json({ data: { id: "1900000000000000555", author_id: F.ADIN, text: `RT @Banks: ${F.MINT.plain}`, referenced_tweets: [{ type: "retweeted", id: "79" }] }, includes: { tweets: [{ id: "79", author_id: F.BANKS }] } })
+          : undefined,
+    ]);
+    const seen = setup(lookup.fetch);
+    await seen.watcher.handlePost(post({ text: `RT @Banks: ${F.MINT.plain}` }), "activity", 0);
+    expect(seen.signals[0]!.s).toMatchObject({ postKind: "repost", referencesWatchedAuthor: true });
+  });
+
+  it("an ordinary post that merely mentions RT isn't touched", async () => {
+    const { watcher, signals } = setup();
+    await watcher.handlePost(post({ text: `not an RT @anyone, CA ${F.MINT.plain}` }), "activity", 0);
+    expect(signals[0]!.s.postKind).toBe("original");
+  });
+});

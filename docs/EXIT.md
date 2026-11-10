@@ -21,7 +21,9 @@ Things to know when choosing numbers:
 - **The trailing stop is active from the moment of the buy.** The peak starts at the entry price, so a 30% trailing stop also acts as a 30% stop-loss until the price rises.
 - **A ladder that adds up to less than 100% leaves the rest riding** until a stop or `max_hold_minutes` sells it.
 - **If the price jumps past two steps between checks, both are sold together.**
-- **Rules 5, 6 and 8 need a price.** While the price can't be read (for example mid-migration), only rules 1–4 and 7 can fire.
+- **Rules 5, 6 and 8 need a price.** While the price can't be read (for example mid-migration), only rules 1–4 and 7 can fire. A coin bought through Jupiter is priced from a Jupiter sell quote for what you hold.
+- **Each ladder step is recorded together with the sale**, and in live mode an unconfirmed sale is checked against the wallet before it's called failed, so a step can't be sold twice.
+- **One empty balance reading never closes a position.** The wallet has to read empty twice in a row.
 - **A failed sell is retried on every check** and you're told once. In live mode each attempt is capped by what the wallet really holds.
 - Sells use `buy.max_slippage_bps` as their slippage limit.
 

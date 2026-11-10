@@ -7,7 +7,9 @@ export const ATA = web3.Keypair.generate().publicKey.toBase58();
 /** A stand-in for the SDK builder: real, harmless instructions (a memo-sized SOL transfer to self). */
 export function fakeBuilder(over: Partial<TradeBuilder> & { extraIxs?: number } = {}) {
   const calls: { op: string; user: string; venue: string; amount: bigint }[] = [];
-  const ix = (user: string) => web3.SystemProgram.transfer({ fromPubkey: new web3.PublicKey(user), toPubkey: new web3.PublicKey(user), lamports: 1 });
+  // Each built trade is a slightly different instruction, so every transaction has its own signature, as real ones do.
+  let seq = 0;
+  const ix = (user: string) => web3.SystemProgram.transfer({ fromPubkey: new web3.PublicKey(user), toPubkey: new web3.PublicKey(user), lamports: ++seq });
   const built = (user: string, expectedOut: bigint, variant: string): BuiltTrade => ({ instructions: [ix(user)], expectedOut, variant, userTokenAccount: ATA });
   const builder: TradeBuilder = {
     buy: async (r) => (calls.push({ op: "buy", user: r.user, venue: r.venue, amount: r.lamportsIn }), built(r.user, 357_000_000_000n, "pump_curve:v3")),

@@ -17,7 +17,12 @@ const LAMPORTS_PER_SOL = 1_000_000_000;
 const SOURCE_CHECK_EVERY_MS = 20_000;
 
 export interface ExitManagerOptions {
-  executor: Pick<Executor, "openPositions" | "position" | "sell">;
+  executor: Pick<Executor, "openPositions" | "position" | "sell" | "reconcile">;
+  /**
+   * Price (lamports per token unit) for a coin that isn't on pump.fun or PumpSwap, from a
+   * sell quote for `units`. Without it, such a position has no price and its stops can't fire.
+   */
+  quotePrice?: ((mint: string, units: bigint) => Promise<number | undefined>) | undefined;
   chain: Pick<ChainReader, "marketFacts" | "tokenBalance">;
   exit: ExitConfig;
   db: Db;
@@ -73,8 +78,9 @@ export class ExitManager {
     while (!signal.aborted) {
       await this.tick();
       await new Promise<void>((resolve) => {
-        const t = setTimeout(resolve, this.#o.exit.price_poll_ms);
-        signal.addEventListener("abort", () => (clearTimeout(t), resolve()), { once: true });
+        const onAbort = () => (clearTimeout(t), resolve());
+        const t = setTimeout(() => (signal.removeEventListener("abort", onAbort), resolve()), this.#o.exit.price_poll_ms);
+        signal.addEventListener("abort", onAbort, { once: true });
       });
     }
   }
@@ -85,6 +91,12 @@ export class ExitManager {
     this.#ticking = true;
     this.stats.ticks++;
     try {
+      // First settle any buy whose outcome wasn't known yet (or that a crash interrupted).
+      try {
+        for (const line of await this.#o.executor.reconcile()) this.#o.notify(line);
+      } catch (err) {
+        this.#o.log.error("exit.reconcile_failed", { error: err });
+      }
       for (const pos of this.#o.executor.openPositions()) {
         try {
           await this.#check(pos);
@@ -115,6 +127,10 @@ export class ExitManager {
       }
     } catch (err) {
       log.warn("exit.price_unavailable", { position_id: pos.id, error: (err as Error).message });
+    }
+    // Not on pump.fun or PumpSwap (bought through Jupiter): price it from a sell quote instead.
+    if (tick.price === undefined && pos.venue === "jupiter" && this.#o.quotePrice) {
+      tick.price = await this.#o.quotePrice(pos.mint, BigInt(pos.tokens_held)).catch(() => undefined);
     }
     if (tick.price !== undefined) this.#lastPrice.set(pos.id, tick.price);
 
@@ -154,7 +170,8 @@ export class ExitManager {
     const sharePct = (Number(units) / Number(BigInt(pos.tokens_bought))) * 100;
     log.info("exit.trigger", { position_id: pos.id, mint: pos.mint, reason, detail, token_amount: units.toString(), gain_pct: decision.gainPct });
     audit(db, log.redactor, "exit.trigger", { position_id: pos.id, mint: pos.mint, reason, detail, token_amount: units.toString() });
-    const out = await this.#o.executor.sell(pos.id, all ? "all" : units, reason);
+    // The new balance and the ladder step are written together, so a step can't be sold and then sold again.
+    const out = await this.#o.executor.sell(pos.id, all ? "all" : units, reason, { stepsDone });
     const tag = pos.simulated ? "PAPER " : "";
     if (out.status === "failed") {
       this.stats.sellFailures++;
@@ -168,7 +185,6 @@ export class ExitManager {
     this.stats.sells++;
     this.#panic.delete(pos.id);
     this.#failureNotified.delete(`${pos.id}:${reason}`);
-    if (stepsDone !== pos.steps_done) db.prepare("UPDATE positions SET steps_done = ? WHERE id = ?").run(stepsDone, pos.id);
     this.#o.notify(`${tag}SOLD ${sharePct.toFixed(0)}% of the ${short(pos.mint)} position for ${sol(Number(out.lamportsOut))} SOL: ${detail}.`);
 
     const after = this.#o.executor.position(pos.id);

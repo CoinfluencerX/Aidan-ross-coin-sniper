@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ChainReader, MarketFacts, MintFacts } from "../src/chain/facts.ts";
 import { SolanaRpc } from "../src/chain/rpc.ts";
-import { PROGRAMS, web3 } from "../src/chain/sdk.ts";
+import { PROGRAMS, splToken, web3 } from "../src/chain/sdk.ts";
 import { loadAppConfig } from "../src/config/load.ts";
 import { base58Encode } from "../src/extract/base58.ts";
 import { compileTx, Executor, simulationFailure, type BuyRequest } from "../src/exec/executor.ts";
@@ -32,7 +32,7 @@ function tokenAccountBase64(amount: bigint) {
   return b.toString("base64");
 }
 
-function setup(o: { chain?: FakeChain; builder?: ReturnType<typeof fakeBuilder>; mode?: "dry-run" | "live"; sender?: Sender; simPayer?: string | undefined; maxOpen?: number; marketNow?: MarketFacts } = {}) {
+function setup(o: { chain?: FakeChain; builder?: ReturnType<typeof fakeBuilder>; mode?: "dry-run" | "live"; sender?: Sender; simPayer?: string | undefined; maxOpen?: number; marketNow?: MarketFacts; now?: () => number } = {}) {
   const rpcCalls: string[] = [];
   const { fetch } = fakeFetch(solanaRpcRoutes({ calls: rpcCalls, simulate: () => ({ err: null, logs: [], unitsConsumed: 81_245, accounts: [{ owner: PROGRAMS.token2022, lamports: 1, executable: false, data: [tokenAccountBase64(357_142_857_142n), "base64"] }] }), ...o.chain }));
   const lines: string[] = [];
@@ -54,6 +54,8 @@ function setup(o: { chain?: FakeChain; builder?: ReturnType<typeof fakeBuilder>;
     db,
     log,
     sender: o.sender,
+    sleep: async () => {},
+    ...(o.now ? { now: o.now } : {}),
   });
   return { executor, db, rpcCalls, builderCalls: b.calls, lines, events: () => lines.map((l) => JSON.parse(l)) };
 }
@@ -200,19 +202,27 @@ describe("executor: live path, against a FAKE sender (no network, no funds)", ()
     const sender: Sender = { send: async (tx) => (sent.push(tx), sent.length === 1 ? "5igFakeSignature" : `5igFakeSignature${sent.length}`), confirm: async () => confirm };
     return { sender, sent };
   }
-  const heldAccount = (amount: bigint): FakeChain => ({ accounts: { [ATA]: { owner: PROGRAMS.token2022, lamports: 1, executable: false, data: Buffer.from(tokenAccountBase64(amount), "base64").toString("hex") } } });
+  /** The live wallet's real token account for the test mint, as the executor derives it. */
+  const WALLET_ATA = splToken.getAssociatedTokenAddressSync(new web3.PublicKey(F.MINT.plain), liveKey.publicKey, true, new web3.PublicKey(PROGRAMS.token2022)).toBase58();
+  const rawAccount = (amount: bigint) => ({ owner: PROGRAMS.token2022, lamports: 1, executable: false, data: Buffer.from(tokenAccountBase64(amount), "base64").toString("hex") });
+  const heldAccount = (amount: bigint): FakeChain => ({ accounts: { [WALLET_ATA]: rawAccount(amount) } });
+  const SIG = /^[1-9A-HJ-NP-Za-km-z]{80,90}$/;
 
   it("signs with the wallet, sends once, and opens the position from the wallet's real balance", async () => {
     const { sender, sent } = fakeSender({ status: "confirmed" });
     const { executor, db, builderCalls } = setup({ mode: "live", sender, chain: heldAccount(350_000_000_000n) });
     const out = await executor.buy(buyReq(db));
-    expect(out).toMatchObject({ status: "confirmed", tokens: 350_000_000_000n, signature: "5igFakeSignature" });
+    expect(out).toMatchObject({ status: "confirmed", tokens: 350_000_000_000n });
+    if (out.status !== "confirmed") throw new Error("unreachable");
+    expect(out.signature).toMatch(SIG);
     expect(sent).toHaveLength(1);
     const tx = web3.VersionedTransaction.deserialize(Buffer.from(sent[0]!, "base64"));
     expect(tx.message.staticAccountKeys[0]!.toBase58()).toBe(liveSigner.publicKey);
     expect(tx.signatures[0]!.some((b) => b !== 0)).toBe(true);
     expect(builderCalls[0]).toMatchObject({ op: "buy", user: liveSigner.publicKey });
-    expect(db.prepare("SELECT status, signature FROM trades").all()).toEqual([{ status: "confirmed", signature: "5igFakeSignature" }]);
+    // The signature is the transaction's own, recorded before the send.
+    expect(base58Encode(tx.signatures[0]!)).toBe(out.signature);
+    expect(db.prepare("SELECT status, signature FROM trades").all()).toEqual([{ status: "confirmed", signature: out.signature }]);
     expect(executor.position((out as { positionId: number }).positionId)).toMatchObject({ status: "open", simulated: 0 });
   });
 
@@ -225,7 +235,7 @@ describe("executor: live path, against a FAKE sender (no network, no funds)", ()
   it("marks the position failed when nothing arrived, and still never retries", async () => {
     const { sender, sent } = fakeSender({ status: "expired" });
     const { executor, db } = setup({ mode: "live", sender, chain: heldAccount(0n) });
-    expect(await executor.buy(buyReq(db))).toMatchObject({ status: "failed", error: "buy not confirmed (expired) and no tokens arrived" });
+    expect(await executor.buy(buyReq(db))).toMatchObject({ status: "failed", error: "buy never confirmed and no tokens arrived" });
     expect((await executor.buy(buyReq(db))).status).toBe("skipped");
     expect(sent).toHaveLength(1);
   });
@@ -307,5 +317,167 @@ describe("wallet loading", () => {
     }
     expect(err).toBeInstanceOf(WalletError);
     expect((err as Error).message).toBe("the wallet key file isn't a solana-keygen keypair (a JSON array of 64 numbers)");
+  });
+});
+
+// ---------- fixes from the independent safety review (2026-11-10) ----------
+
+describe("live buys: never guess whether a sent transaction landed", () => {
+  const WALLET_ATA = splToken.getAssociatedTokenAddressSync(new web3.PublicKey(F.MINT.plain), liveKey.publicKey, true, new web3.PublicKey(PROGRAMS.token2022)).toBase58();
+  const raw = (amount: bigint) => ({ owner: PROGRAMS.token2022, lamports: 1, executable: false, data: Buffer.from(tokenAccountBase64(amount), "base64").toString("hex") });
+  const sender = (confirm: Awaited<ReturnType<Sender["confirm"]>>, sendThrows = false) => {
+    const sent: string[] = [];
+    const s: Sender = {
+      send: async (tx) => {
+        sent.push(tx);
+        if (sendThrows) throw new Error("timed out");
+        return "x";
+      },
+      confirm: async () => confirm,
+    };
+    return { s, sent };
+  };
+
+  it("a send that errors is still checked against the wallet: tokens there means bought", async () => {
+    const { s, sent } = sender({ status: "expired" }, true);
+    const { executor, db } = setup({ mode: "live", sender: s, chain: { accounts: { [WALLET_ATA]: raw(42_000n) } } });
+    expect(await executor.buy(buyReq(db))).toMatchObject({ status: "confirmed", tokens: 42_000n });
+    expect(sent).toHaveLength(1);
+  });
+
+  it("confirmed, but the balance isn't readable yet: stays pending, then reconcile opens it", async () => {
+    const chain: FakeChain = { accounts: {} };
+    const { s } = sender({ status: "confirmed" });
+    const { executor, db } = setup({ mode: "live", sender: s, chain });
+    const out = await executor.buy(buyReq(db));
+    expect(out).toMatchObject({ status: "unknown", detail: "confirmed, but the tokens aren't visible in the wallet yet" });
+    const id = (out as { positionId: number }).positionId;
+    expect(executor.position(id)!.status).toBe("pending");
+    // Still counted, so a second coin can't be bought while this one is unresolved.
+    expect(executor.activePositionCount()).toBe(1);
+    expect((await executor.buy(buyReq(db, { mint: F.MINT.pump }))).status).toBe("skipped");
+    expect(await executor.reconcile()).toEqual([]); // too early to give up, nothing visible yet
+    chain.accounts![WALLET_ATA] = raw(5_000n);
+    const lines = await executor.reconcile();
+    expect(lines).toEqual([expect.stringContaining("the buy DID land")]);
+    expect(executor.position(id)).toMatchObject({ status: "open", tokens_held: "5000", cost_lamports: 10_000_000 });
+    expect(db.prepare("SELECT status FROM trades WHERE side = 'buy'").all()).toEqual([{ status: "confirmed" }]);
+  });
+
+  it("reconcile gives up on a sent buy only after it can no longer land", async () => {
+    let clock = 1_000_000;
+    const { s } = sender({ status: "confirmed" });
+    const { executor, db } = setup({ mode: "live", sender: s, chain: { accounts: {} }, now: () => clock });
+    const out = await executor.buy(buyReq(db));
+    const id = (out as { positionId: number }).positionId;
+    clock += 60_000;
+    expect(await executor.reconcile()).toEqual([]);
+    expect(executor.position(id)!.status).toBe("pending");
+    clock += 200_000;
+    expect(await executor.reconcile()).toEqual([expect.stringContaining("the buy never landed")]);
+    expect(executor.position(id)!.status).toBe("failed");
+  });
+
+  it("a row left pending by a crash before anything was sent is failed at the next reconcile", async () => {
+    const { executor, db } = setup({ mode: "live", sender: sender({ status: "confirmed" }).s });
+    db.prepare("INSERT INTO positions (mint, status, created_at, updated_at, simulated, token_program) VALUES (?, 'pending', 1, 1, 0, 'token-2022')").run(F.MINT.tco);
+    expect(await executor.reconcile()).toEqual([expect.stringContaining("interrupted before anything was sent")]);
+    expect(db.prepare("SELECT status FROM positions").all()).toEqual([{ status: "failed" }]);
+    expect(executor.activePositionCount()).toBe(0);
+  });
+
+  it("dry-run: a pending paper row is failed too", async () => {
+    const { executor, db } = setup();
+    db.prepare("INSERT INTO positions (mint, status, created_at, updated_at, simulated) VALUES (?, 'pending', 1, 1, 1)").run(F.MINT.tco);
+    expect(await executor.reconcile()).toHaveLength(1);
+    expect(db.prepare("SELECT status FROM positions").all()).toEqual([{ status: "failed" }]);
+  });
+});
+
+describe("buy: retrying is only allowed before anything is sent", () => {
+  it("rebuilds after an RPC hiccup while building", async () => {
+    let calls = 0;
+    const b = fakeBuilder();
+    const real = b.builder.buy;
+    b.builder.buy = async (r) => {
+      if (++calls === 1) throw new Error("RPC getAccountInfo: timed out after 4000 ms");
+      return real(r);
+    };
+    const { executor, db } = setup({ builder: b });
+    expect((await executor.buy(buyReq(db))).status).toBe("simulated");
+    expect(calls).toBe(2);
+  });
+
+  it("gives up after three failed builds, with the row failed (never left pending)", async () => {
+    const b = fakeBuilder({ buy: async () => Promise.reject(new Error("node is down")) });
+    const { executor, db } = setup({ builder: b });
+    expect(await executor.buy(buyReq(db))).toMatchObject({ status: "failed", error: "couldn't build the buy after 3 tries: node is down" });
+    expect(db.prepare("SELECT status FROM positions").all()).toEqual([{ status: "failed" }]);
+  });
+});
+
+describe("dry-run never hands a signed transaction to anyone", () => {
+  it("the transaction sent for simulation has no signature, even when the real wallet is the payer", async () => {
+    const seen: string[] = [];
+    const kp = web3.Keypair.generate();
+    const signer = { publicKey: kp.publicKey.toBase58(), ephemeral: false, sign: (tx: InstanceType<typeof web3.VersionedTransaction>) => tx.sign([kp]) };
+    const { fetch } = fakeFetch(solanaRpcRoutes({ simulate: (p) => (seen.push(p[0] as string), { err: null, logs: [] }) }));
+    const db = openDb(":memory:");
+    const executor = new Executor({ mode: "dry-run", rpc: new SolanaRpc({ url: URL, fetch }), chain: {} as ChainReader, builder: fakeBuilder().builder, signer, simPayer: signer.publicKey, guardrails: config.guardrails, db, log: createLogger({ write: () => {} }) });
+    expect((await executor.buy(buyReq(db))).status).toBe("simulated");
+    expect(seen).toHaveLength(1);
+    const tx = web3.VersionedTransaction.deserialize(Buffer.from(seen[0]!, "base64"));
+    expect(tx.message.staticAccountKeys[0]!.toBase58()).toBe(signer.publicKey);
+    expect(tx.signatures.every((sig) => sig.every((b) => b === 0))).toBe(true);
+  });
+});
+
+describe("live sells: an unconfirmed sale is checked against the wallet", () => {
+  const WALLET_ATA = splToken.getAssociatedTokenAddressSync(new web3.PublicKey(F.MINT.plain), liveKey.publicKey, true, new web3.PublicKey(PROGRAMS.token2022)).toBase58();
+  const raw = (amount: bigint) => ({ owner: PROGRAMS.token2022, lamports: 1, executable: false, data: Buffer.from(tokenAccountBase64(amount), "base64").toString("hex") });
+
+  async function bought(chain: FakeChain) {
+    const state = { confirm: { status: "confirmed" } as Awaited<ReturnType<Sender["confirm"]>>, onSend: () => {} };
+    const s: Sender = { send: async () => (state.onSend(), "x"), confirm: async () => state.confirm };
+    const ctx = setup({ mode: "live", sender: s, chain });
+    const buy = await ctx.executor.buy(buyReq(ctx.db));
+    if (buy.status !== "confirmed") throw new Error("setup buy failed");
+    return { ...ctx, state, id: buy.positionId };
+  }
+
+  it("'expired' but the wallet holds that much less: it landed, so it isn't sold again", async () => {
+    const chain: FakeChain = { accounts: { [WALLET_ATA]: raw(1_000n) } };
+    const t = await bought(chain);
+    t.state.confirm = { status: "expired" };
+    t.state.onSend = () => (chain.accounts![WALLET_ATA] = raw(750n)); // the sale lands while we wait
+    const out = await t.executor.sell(t.id, 250n, "take_profit", { stepsDone: 1 });
+    expect(out).toMatchObject({ status: "confirmed", tokensSold: 250n, remaining: 750n });
+    expect(t.executor.position(t.id)).toMatchObject({ tokens_held: "750", steps_done: 1, status: "open" });
+  });
+
+  it("'expired' and the wallet is unchanged: it didn't land, and the step isn't counted", async () => {
+    const t = await bought({ accounts: { [WALLET_ATA]: raw(1_000n) } });
+    t.state.confirm = { status: "expired" };
+    expect(await t.executor.sell(t.id, 250n, "take_profit", { stepsDone: 1 })).toEqual({ status: "failed", error: "sell not confirmed (expired)" });
+    expect(t.executor.position(t.id)).toMatchObject({ tokens_held: "1000", steps_done: 0, status: "open" });
+  });
+
+  it("one empty balance read doesn't close the position: the second read is believed", async () => {
+    const chain: FakeChain = { accounts: { [WALLET_ATA]: raw(1_000n) } };
+    const t = await bought(chain);
+    // A node that's behind reports the account as missing once, then correctly.
+    let reads = 0;
+    const real = chain.accounts![WALLET_ATA]!;
+    Object.defineProperty(chain.accounts!, WALLET_ATA, { get: () => (++reads === 1 ? undefined : real), configurable: true });
+    const out = await t.executor.sell(t.id, "all", "stop_loss");
+    expect(out).toMatchObject({ status: "confirmed", tokensSold: 1_000n });
+  });
+
+  it("two empty reads in a row do close it (you sold by hand)", async () => {
+    const chain: FakeChain = { accounts: { [WALLET_ATA]: raw(1_000n) } };
+    const t = await bought(chain);
+    delete chain.accounts![WALLET_ATA];
+    expect(await t.executor.sell(t.id, "all", "stop_loss")).toEqual({ status: "failed", error: "nothing left to sell" });
+    expect(t.executor.position(t.id)!.status).toBe("closed");
   });
 });

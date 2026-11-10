@@ -68,9 +68,11 @@ export function formatUnits(units: bigint, decimals: number): string {
 export class Engine {
   readonly #o: EngineOptions;
   readonly #pending = new Set<Promise<void>>();
-  stats = { signals: 0, validated: 0, passed: 0, blocked: 0, bought: 0, skipped: 0, failed: 0, errors: 0, migrationRetries: 0 };
+  stats = { signals: 0, validated: 0, passed: 0, blocked: 0, bought: 0, skipped: 0, failed: 0, unresolved: 0, errors: 0, migrationRetries: 0 };
   /** /kill turns this off: signals are still validated and alerted, but nothing is bought. */
   armed = true;
+  /** Set when the bot is shutting down. A signal still in flight is alerted but never bought. */
+  stopping = false;
 
   constructor(o: EngineOptions) {
     this.#o = o;
@@ -119,7 +121,7 @@ export class Engine {
     const retry = this.#o.migrationRetry ?? { everyMs: 1_500, forMs: 45_000 };
     const sleep = this.#o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
     const waitStart = now();
-    while (isMidMigration(verdict) && now() - waitStart < retry.forMs) {
+    while (isMidMigration(verdict) && now() - waitStart < retry.forMs && !this.stopping) {
       this.stats.migrationRetries++;
       log.info("validation.waiting_for_pool", { mint: s.mint, waited_ms: now() - waitStart, note: "curve complete, PumpSwap pool not created yet" });
       await sleep(retry.everyMs);
@@ -127,6 +129,8 @@ export class Engine {
     }
     this.stats.validated++;
     verdict.decision === "buy" ? this.stats.passed++ : this.stats.blocked++;
+    // Check details can carry error text from the network. Redact before it's stored or shown.
+    for (const o of verdict.outcomes) o.detail = log.redactor.redactString(o.detail);
     recordDecisions(db, signalId, verdict, now());
     log.info("validation", {
       mint: s.mint,
@@ -142,7 +146,12 @@ export class Engine {
 
     const extra = verdictLines(verdict);
     let executed = false;
-    if (verdict.decision === "buy" && this.#o.executor && !this.armed) {
+    if (verdict.decision === "buy" && this.#o.executor && this.stopping) {
+      // Never open a position on the way out: nothing would be left running to manage it.
+      this.stats.skipped++;
+      extra.push("BUY SKIPPED: the bot is shutting down.");
+      log.warn("buy.skipped", { mint: s.mint, reason: "shutting_down" });
+    } else if (verdict.decision === "buy" && this.#o.executor && !this.armed) {
       this.stats.skipped++;
       extra.push("BUY SKIPPED: buying is off (/kill was sent). Send /arm to turn it back on.");
       log.warn("buy.skipped", { mint: s.mint, reason: "disarmed" });
@@ -157,6 +166,9 @@ export class Engine {
       } else if (out.status === "failed") {
         this.stats.failed++;
         extra.push(`BUY FAILED: ${out.error}`, "  This mint is now locked: the bot will not try it again.");
+      } else if (out.status === "unknown") {
+        this.stats.unresolved++;
+        extra.push(`BUY SENT, RESULT UNKNOWN: ${out.detail}`, `  ${out.signature}`, "  The bot keeps checking the wallet and will tell you. Look at the wallet yourself too.");
       } else {
         this.stats.bought++;
         // Skip it if the post's timestamp is ahead of our clock (clock skew): a negative delay means nothing.
@@ -180,6 +192,7 @@ export class Engine {
     }
 
     const severity = verdict.decision === "blocked" ? "red" : verdict.warns.length ? "yellow" : "green";
+    for (let i = 0; i < extra.length; i++) extra[i] = log.redactor.redactString(extra[i]!);
     this.#o.notify?.(
       [`${severity.toUpperCase()}: coin address from @${s.account.handle} on ${s.source}${s.account.isTest ? " (TEST ACCOUNT)" : ""}`, s.mint, s.postUrl, ...extra, mode === "dry-run" ? "DRY-RUN: no real transaction." : "LIVE"].join("\n"),
     );

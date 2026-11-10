@@ -78,6 +78,9 @@ const HARMLESS_EXTENSIONS = new Set([
   "confidentialTransferFeeConfig",
 ]);
 
+/** Webhook events that carry a stream title rather than something the streamer typed. */
+export const TITLE_PATHS = new Set(["livestream.metadata.updated", "livestream.status.updated", "channel.update", "stream.online"]);
+
 function isSet(v: unknown): boolean {
   return v !== null && v !== undefined && v !== "";
 }
@@ -184,6 +187,10 @@ export async function validate(signal: AddressSignal, lamportsIn: bigint, deps: 
   add("address_in_post", "source", signal.origins.length > 0, signal.origins.length ? `found in ${[...new Set(signal.origins.map((o) => o.kind))].join(", ")}` : "no origin recorded");
   add("single_address", "source", signal.mintsInPost === 1, signal.mintsInPost === 1 ? "one address in the post" : `post carries ${signal.mintsInPost} different addresses`);
   add("warning_post_filter", "source", signal.warningKeywords.length === 0, signal.warningKeywords.length ? `warning words: ${signal.warningKeywords.join(", ")}` : "no warning words");
+
+  // A stream title isn't necessarily the streamer's own words: editors, moderators and "!title" bots can set it.
+  const fromTitle = signal.source !== "x" && TITLE_PATHS.has(signal.path);
+  add("title_source", "source", !fromTitle, fromTitle ? `address came from a ${signal.source} stream title, which channel editors and moderators can also change` : "not from a stream title");
 
   const conflict = allow ? crossAccountConflict(deps.db, signal, allow.person, now - config.params.cross_account_window_hours * 3_600_000) : undefined;
   add("cross_account_match", "source", conflict === undefined, conflict ? `${conflict.person} posted a different address (${short(conflict.mint)})` : "no conflicting address from the other person");

@@ -15,12 +15,13 @@ Anything that fails a **BLOCK** check stops the buy and sends a Telegram alert. 
 | Check | Default | Why |
 |---|---|---|
 | Author matches an allowlisted **numeric account ID** (not handle or display name) | BLOCK | Handles can be renamed. Impersonators copy display names. |
-| Post is original, or a repost/quote of another allowlisted account | BLOCK | Replies and quote-tweets from strangers carry fake addresses. |
+| Post is original, or a repost/quote of another **tier-1** account | BLOCK | Replies and quote-tweets from strangers carry fake addresses. |
 | Address appears in the post itself (text, link, or OCR of an attached image) | BLOCK | Never take an address from replies or comments. |
 | If both Adin and Banks post, the addresses match | BLOCK on mismatch | Two different addresses means something is wrong. Halt and alert. |
 | Post carries exactly one address (`single_address`) | BLOCK | Two different addresses in one post is ambiguous. We don't guess. |
 | Account is **tier 1** in `accounts.yaml` (`tier1_source`) | BLOCK (fixed) | Tier-2 accounts only confirm. The tier is read from the config, never from the signal. |
 | Post reached us within `max_post_age_seconds` (`post_age`) | WARN | A post that arrives minutes late means the price has already moved. |
+| Address didn't come from a Kick or Twitch **stream title** (`title_source`) | BLOCK | Channel editors, moderators and `!title` bots can change a title, so it isn't necessarily the streamer's own words. Title addresses are alerted, not bought. Set it to `warn` to let titles buy. The streamer's own Kick chat messages are not affected. |
 | Post isn't a "don't buy X, it's fake" warning | WARN | Celebs often post fake addresses to warn people. A keyword filter flags "fake", "not mine" and "scam". |
 | **Hacked-account guard**: optionally buy part of the size on the first official post, and the rest only when a second source confirms the same address (the other person, or another platform) | Setting for the guardrails session | Official accounts do get hacked. Roaring Kitty's X posted a pump.fun address (RKC, −85% within the hour). Kanye's Instagram promoted a fake coin (−96%). See [research](research/past-celebrity-launches.md). |
 | **Deleted post**: if the source post disappears within N minutes, the exit manager sells | Exit trigger | Hacked or fake posts get deleted fast: RKC within an hour, ROSS in ~20 min. |

@@ -219,6 +219,20 @@ export class XWatcher {
       }
     }
 
+    // The streams don't always say what a post refers to. Text that starts "RT @name:" is a repost
+    // of someone else's words, whatever the payload claims: look it up, and if that fails treat it
+    // as a repost of an unknown author (which the validator blocks).
+    if (full.kind === "original" && /^RT @\w{1,15}:/.test(full.content.text)) {
+      let looked: XPost | null = null;
+      try {
+        const r = await this.#o.client.getPost(post.id);
+        looked = r.data ? normalizeTweet(r.data, r.includes) : null;
+      } catch (err) {
+        log.warn("x.post.hydrate_failed", { post_id: post.id, error: (err as Error).message });
+      }
+      full = looked && looked.kind !== "original" ? looked : { ...full, kind: "repost", referenced: [] };
+    }
+
     const result = await processPost(
       {
         source: "x",
@@ -227,7 +241,9 @@ export class XWatcher {
         url: `https://x.com/${account.handle}/status/${post.id}`,
         account,
         kind: full.kind,
-        referencesWatchedAuthor: full.referenced.length > 0 && full.referenced.every((r) => r.authorId !== undefined && this.#byId.has(r.authorId)),
+        // A reply, quote or repost only counts when the post it points at is by a TIER-1 account.
+        // A tier-2 account must never be able to trigger a buy, not even through a tier-1 repost of it.
+        referencesWatchedAuthor: full.referenced.length > 0 && full.referenced.every((r) => r.authorId !== undefined && this.#byId.get(r.authorId)?.tier === 1),
         createdAt: full.createdAt,
         content: full.content,
       },

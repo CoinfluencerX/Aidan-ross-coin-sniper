@@ -13,6 +13,7 @@ import { openDb, SCHEMA_VERSION, type Db } from "../state/db.ts";
 import { formatEvmAlert } from "../alert/console.ts";
 import { JupiterClient, jupiterRouteCheck, SolPrice } from "../chain/jupiter.ts";
 import { SolanaRpc } from "../chain/rpc.ts";
+import { PROGRAMS } from "../chain/programs.ts";
 import type { ChainReader } from "../chain/facts.ts";
 import type { TradeBuilder } from "../exec/builder.ts";
 import type { Executor } from "../exec/executor.ts";
@@ -257,38 +258,10 @@ async function watch(
   }
   const client = new XClient({ bearerToken: env.X_BEARER_TOKEN, ...(opts.fetch ? { fetch: opts.fetch } : {}) });
 
-  let watchList;
-  try {
-    watchList = buildWatchList(config.accounts, mode);
-    await verifyWatchList(client, watchList, log);
-  } catch (err) {
-    const known = err instanceof WatchConfigError || err instanceof XApiError;
-    log.error("watch.accounts_invalid", { error: (err as Error).message });
-    audit(db, log.redactor, "shutdown", { mode, reason: "accounts_invalid" });
-    if (known) return EXIT.CONFIG;
-    throw err;
-  }
-
-  // Set up each path. A path whose endpoint the plan doesn't include is dropped, not fatal,
-  // as long as one path remains.
-  const paths: XPath[] = [];
-  const setups: [XPath, () => Promise<unknown>][] = [
-    ["activity", () => ensureActivitySubscriptions(client, watchList, log)],
-    ["filtered_stream", () => ensureStreamRule(client, watchList, log)],
-  ];
-  for (const [path, setup] of setups) {
-    try {
-      await setup();
-      paths.push(path);
-    } catch (err) {
-      log.warn("watch.path_unavailable", { path, error: (err as Error).message });
-    }
-  }
-  if (paths.length === 0) {
-    log.error("watch.no_paths", { note: "Neither the Activity API nor Filtered Stream could be set up. Check the X plan and token." });
-    audit(db, log.redactor, "shutdown", { mode, reason: "no_paths" });
-    return EXIT.CONFIG;
-  }
+  const stops = [opts.signal, durationMs !== undefined ? AbortSignal.timeout(durationMs) : undefined].filter(
+    (s): s is AbortSignal => s !== undefined,
+  );
+  const stop = stops.length ? AbortSignal.any(stops) : new AbortController().signal;
 
   const ocr = opts.ocr === null ? undefined : (opts.ocr ?? defaultOcr(log));
   const alert = opts.alert ?? ((text: string) => process.stderr.write(text + "\n"));
@@ -333,7 +306,7 @@ async function watch(
   }
   /** One-line events (sales, failures): terminal and Telegram. */
   const notify = (text: string) => {
-    alert(text);
+    alert(log.redactor.redactString(text));
     void telegram?.send(text);
   };
 
@@ -347,6 +320,12 @@ async function watch(
           db,
           log,
           notify,
+          // A coin bought through Jupiter has no pump.fun price. Price it from a sell quote for what we hold.
+          quotePrice: async (mint, units) => {
+            if (units <= 0n) return undefined;
+            const q = await jupiter.quote(mint, PROGRAMS.wsol, units, config.guardrails.buy.max_slippage_bps);
+            return Number(q.outAmount) / Number(units);
+          },
           isSourceDeleted: async (source, postId) => {
             if (source !== "x") return undefined;
             try {
@@ -357,6 +336,87 @@ async function watch(
           },
         })
       : undefined;
+
+  // Background loops: the exit manager and Telegram. They start BEFORE X is set up and don't
+  // depend on it, so open positions are still managed (and /sell still works) if X is down.
+  const done = new AbortController();
+  const background = AbortSignal.any([stop, done.signal]);
+  const startedAt = Date.now();
+  const ctx: { engine?: Engine; watcher?: XWatcher; webhooks?: Awaited<ReturnType<typeof startWebhookWatchers>>; watchList?: readonly { handle: string }[] } = {};
+  const loops: Promise<void>[] = [];
+  if (exitManager) loops.push(exitManager.run(background));
+  if (telegram) {
+    const tg = telegram;
+    loops.push(
+      tg.listen(background, (cmd) =>
+        handleCommand(cmd, {
+          mode,
+          startedAt,
+          now: Date.now,
+          isArmed: () => ctx.engine?.armed ?? false,
+          setArmed: (armed) => {
+            if (ctx.engine) ctx.engine.armed = armed;
+            log.warn("control.armed_changed", { armed });
+            audit(db, log.redactor, "control.armed_changed", { armed });
+          },
+          positions: () => exitManager?.status() ?? [],
+          panicSell: (id) => exitManager?.panicSell(id) ?? 0,
+          watching: () => (ctx.watchList ? [`X (${ctx.watchList.map((a) => "@" + a.handle).join(", ")})`, ...(ctx.webhooks?.sources ?? [])] : ["nothing (X isn't connected)"]),
+          stats: () => ({ watcher: ctx.watcher?.stats, engine: ctx.engine?.stats }),
+        }),
+      ),
+    );
+  }
+  const untilStopped = () => new Promise<void>((resolve) => (stop.aborted ? resolve() : stop.addEventListener("abort", () => resolve(), { once: true })));
+  const endLoops = async () => {
+    done.abort();
+    await Promise.all(loops);
+    solPrice.stop();
+  };
+  /** X can't be watched. With nothing open, exit. With a position open, stay up and keep managing it. */
+  const withoutX = async (reason: string, code: number): Promise<number> => {
+    const open = executor?.activePositionCount() ?? 0;
+    if (open > 0) {
+      log.error("watch.x_down_positions_open", { reason, open_positions: open, note: "not buying anything new; still managing open positions until stopped" });
+      notify(`X can't be watched (${reason}). Nothing new will be bought. Still managing ${open} open position(s): /status, /sell. Fix X and restart.`);
+      await untilStopped();
+    }
+    await endLoops();
+    audit(db, log.redactor, "shutdown", { mode, reason });
+    return code;
+  };
+
+  let watchList;
+  try {
+    watchList = buildWatchList(config.accounts, mode);
+    await verifyWatchList(client, watchList, log);
+  } catch (err) {
+    const known = err instanceof WatchConfigError || err instanceof XApiError;
+    log.error("watch.accounts_invalid", { error: (err as Error).message });
+    return withoutX("accounts_invalid", known ? EXIT.CONFIG : EXIT.FATAL);
+  }
+
+  // Set up each path. A path whose endpoint the plan doesn't include is dropped, not fatal,
+  // as long as one path remains.
+  const paths: XPath[] = [];
+  const setups: [XPath, () => Promise<unknown>][] = [
+    ["activity", () => ensureActivitySubscriptions(client, watchList, log)],
+    ["filtered_stream", () => ensureStreamRule(client, watchList, log)],
+  ];
+  for (const [path, setup] of setups) {
+    try {
+      await setup();
+      paths.push(path);
+    } catch (err) {
+      log.warn("watch.path_unavailable", { path, error: (err as Error).message });
+    }
+  }
+  if (paths.length === 0) {
+    log.error("watch.no_paths", { note: "Neither the Activity API nor Filtered Stream could be set up. Check the X plan and token." });
+    return withoutX("no_paths", EXIT.CONFIG);
+  }
+
+  ctx.watchList = watchList;
 
   const engine = new Engine({
     mode,
@@ -371,6 +431,10 @@ async function watch(
     jupiterRoute: jupiterRouteCheck(jupiter, config.guardrails.buy.max_slippage_bps),
     solUsd: () => solPrice.get(),
   });
+
+  ctx.engine = engine;
+  // The moment a stop is asked for, no new position may be opened: nothing would be left running to manage it.
+  stop.addEventListener("abort", () => (engine.stopping = true), { once: true });
 
   // Every source (X, Kick, Twitch) feeds the same pipeline, so the rules can't differ between them.
   const pipeline: PipelineDeps = {
@@ -413,10 +477,8 @@ async function watch(
     ...(opts.webhookPort !== undefined ? { port: opts.webhookPort, host: "127.0.0.1" } : {}),
   });
 
-  const stops = [opts.signal, durationMs !== undefined ? AbortSignal.timeout(durationMs) : undefined].filter(
-    (s): s is AbortSignal => s !== undefined,
-  );
-  const stop = stops.length ? AbortSignal.any(stops) : new AbortController().signal;
+  ctx.watcher = watcher;
+  ctx.webhooks = webhooks;
   log.info("watch.started", {
     mode,
     paths,
@@ -432,45 +494,22 @@ async function watch(
   });
   audit(db, log.redactor, "watch.started", { mode, paths, accounts: watchList });
 
-  // Background loops stop when the watcher does (Ctrl-C, --duration, or every stream failing).
-  const done = new AbortController();
-  const background = AbortSignal.any([stop, done.signal]);
-  const startedAt = Date.now();
-  const loops: Promise<void>[] = [];
-  if (exitManager) loops.push(exitManager.run(background));
-  if (telegram) {
-    const tg = telegram;
-    loops.push(
-      tg.listen(background, (cmd) =>
-        handleCommand(cmd, {
-          mode,
-          startedAt,
-          now: Date.now,
-          isArmed: () => engine.armed,
-          setArmed: (armed) => {
-            engine.armed = armed;
-            log.warn("control.armed_changed", { armed });
-            audit(db, log.redactor, "control.armed_changed", { armed });
-          },
-          positions: () => exitManager?.status() ?? [],
-          panicSell: (id) => exitManager?.panicSell(id) ?? 0,
-          watching: () => [`X (${watchList.map((a) => "@" + a.handle).join(", ")})`, ...(webhooks?.sources ?? [])],
-          stats: () => ({ watcher: watcher.stats, engine: engine.stats }),
-        }),
-      ),
-    );
-    void tg.send(
-      `Sniper started in ${mode} mode. Watching ${watchList.length} X accounts${webhooks ? ` + ${webhooks.sources.join(", ")}` : ""}. Validator ${chain ? "on" : "OFF (no RPC)"}. Buying ${executor ? "armed" : "off (no executor)"}. Send /help for commands.`,
-    );
-  }
+  void telegram?.send(
+    `Sniper started in ${mode} mode. Watching ${watchList.length} X accounts${webhooks ? ` + ${webhooks.sources.join(", ")}` : ""}. Validator ${chain ? "on" : "OFF (no RPC)"}. Buying ${executor ? "armed" : "off (no executor)"}. Send /help for commands.`,
+  );
 
   const { failedPaths } = await watcher.run(stop);
   const everyPathFailed = failedPaths.length === paths.length && !stop.aborted;
+  if (everyPathFailed && (executor?.activePositionCount() ?? 0) > 0) {
+    // Every X stream is gone but a position is open: stay up for the exit rules and /sell.
+    engine.stopping = true;
+    log.error("watch.x_down_positions_open", { reason: "all_paths_failed", open_positions: executor?.activePositionCount() });
+    notify("Every X stream failed. Nothing new will be bought. Still managing open positions: /status, /sell. Fix X and restart.");
+    await untilStopped();
+  }
   await webhooks?.close();
   await engine.drain();
-  done.abort();
-  await Promise.all(loops);
-  solPrice.stop();
+  await endLoops();
   const stillOpen = exitManager?.status().length ?? 0;
   if (stillOpen > 0) {
     log.warn("shutdown.positions_open", { count: stillOpen, note: "the bot is stopping with open positions: nothing will manage them until it's started again" });

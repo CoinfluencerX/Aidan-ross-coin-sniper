@@ -262,3 +262,38 @@ describe("exit manager (dry-run, paper sells)", () => {
     expect(view!.ageMinutes).toBeCloseTo(5, 1);
   });
 });
+
+describe("exit manager: review fixes", () => {
+  it("prices a Jupiter-bought coin from a sell quote, so its stop-loss can fire", async () => {
+    const m = await managed(cfg());
+    // Pretend the position was bought through Jupiter: no pump.fun market exists for it.
+    m.db.prepare("UPDATE positions SET venue = 'jupiter' WHERE id = ?").run(m.id);
+    const entry = m.executor.position(m.id)!.entry_price!;
+    const asked: bigint[] = [];
+    let multiple = 1;
+    const chain = { marketFacts: async () => market({ venue: "none", priceLamportsPerUnit: undefined, detail: "not a pump.fun token" }), tokenBalance: async () => 0n } as unknown as ChainReader;
+    const notes: string[] = [];
+    const jm = new ExitManager({ executor: m.executor, chain, exit: cfg(), db: m.db, log: createLogger({ write: () => {} }), notify: (t) => notes.push(t), quotePrice: async (_mint, units) => (asked.push(units), entry * multiple), now: () => m.state.now });
+    await jm.tick();
+    expect(asked).toHaveLength(1);
+    expect(jm.status()[0]!.gainPct).toBeCloseTo(0, 6);
+    multiple = 0.5; // -50%: past the 40% stop-loss
+    await jm.tick();
+    expect(m.sells()).toEqual([{ reason: "stop_loss", status: "simulated" }]);
+  });
+
+  it("without a quote source, a Jupiter position has no price and only non-price rules can sell it", async () => {
+    const m = await managed(cfg({ max_hold_minutes: null }));
+    m.db.prepare("UPDATE positions SET venue = 'jupiter' WHERE id = ?").run(m.id);
+    await m.at(0.01, 1000, { venue: "none", priceLamportsPerUnit: undefined });
+    expect(m.sells()).toEqual([]);
+  });
+
+  it("tells the owner when a pending buy is settled", async () => {
+    const notes: string[] = [];
+    const executor = { openPositions: () => [], position: () => undefined, sell: async () => ({ status: "failed" as const, error: "" }), reconcile: async () => ["Position #4 (abcd…wxyz): the buy DID land. Tokens found in the wallet; the position is now open and managed."] };
+    const jm = new ExitManager({ executor, chain: {} as ChainReader, exit: cfg(), db: openDb(":memory:"), log: createLogger({ write: () => {} }), notify: (t) => notes.push(t) });
+    await jm.tick();
+    expect(notes).toEqual([expect.stringContaining("the buy DID land")]);
+  });
+});

@@ -8,7 +8,7 @@ The executor turns a validated signal into one buy, and the exit manager's decis
 |---|---|---|
 | Builds and signs the transaction | Yes | Yes |
 | Simulates it on current chain state | Yes | Yes (the validator's sell simulation) |
-| Sends it | **No.** No sender object exists in dry-run. | Yes |
+| Sends it | **No.** No sender object exists in dry-run, and the transaction handed to the RPC for simulation is never signed. | Yes |
 | Records | A paper position and `simulated` trades | Real positions, trades with signatures |
 
 Live mode needs all of: `--mode live`, `MODE=live`, `LIVE=1`, guardrails with `status: set`, a wallet, Telegram, an empty `test_accounts` list, **and** `LIVE_TRADING_AVAILABLE = true` in `src/config/mode.ts`. That last switch is `false` in the repo. Only the owner turns it on.
@@ -17,7 +17,17 @@ Live mode needs all of: `--mode live`, `MODE=live`, `LIVE=1`, guardrails with `s
 
 ## One buy per coin, ever
 
-Before anything is built, the executor takes the one-shot lock (`positions` row, unique per mint). If the buy then fails, the mint stays locked and the bot never retries it: a "failed" send can still have landed, so a retry could buy twice. It also refuses a new coin while `max_open_positions` are open.
+Before anything is built, the executor takes the one-shot lock (`positions` row, unique per mint). It also refuses a new coin while `max_open_positions` are open, pending ones included.
+
+- **Before anything is sent**, a failure (an RPC hiccup while building) is retried up to 3 times. That's safe: nothing has left the machine.
+- **Once a send is attempted, there is never a retry**, even if the send call itself errors. A send that "failed" can still have landed.
+- **The bot never guesses whether a sent buy landed.** The transaction's signature is written to the database before sending. Then it waits up to 90 s for confirmation and reads the wallet:
+  - tokens in the wallet → the position opens, whatever the confirmation said;
+  - the chain reports the transaction failed → marked failed;
+  - it expired and two balance reads agree the wallet is empty → marked failed;
+  - anything else (confirmed but not visible yet, or the balance can't be read) → the position stays **pending** and you get `BUY SENT, RESULT UNKNOWN`. The bot re-checks the wallet every second and tells you when it settles. It only gives up after 3 minutes with an empty wallet.
+- **After a crash or restart**, pending rows are settled the same way before anything else happens.
+- A mint that ends up failed stays locked for good.
 
 ## Where it buys
 
@@ -27,7 +37,9 @@ Before anything is built, the executor takes the one-shot lock (`positions` row,
 | PumpSwap | The token graduated | Official SDK, `buyQuoteInput` on the canonical pool |
 | Jupiter | Not a pump.fun token | Jupiter swap API builds the transaction |
 
-A curve that is complete but not yet migrated has no venue for a few seconds. The validator blocks with "mid-migration". The buy lock is not taken in that case, so a second official post can still trigger a buy once the pool exists.
+**How much SOL a buy can spend:** on the bonding curve, at most `sol_per_buy`, fees included. On PumpSwap, the SDK's "spend this much SOL" buy allows up to `max_slippage_bps` **more** than `sol_per_buy` if the price moves while the transaction is in flight. Size the wallet for that.
+
+A curve that is complete but not yet migrated has no venue for a few seconds. The engine waits for the pool: it re-checks every 1.5 s for up to 45 s, then gives up with "mid-migration". The buy lock is only taken once the validator passes.
 
 Sells re-check the venue each time, so a coin bought on the curve is sold on PumpSwap after it graduates.
 

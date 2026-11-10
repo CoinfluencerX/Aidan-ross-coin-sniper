@@ -355,3 +355,93 @@ describe("main --watch with Telegram (fake APIs)", () => {
     db.close();
   });
 });
+
+describe("engine: shutdown and uncertain buys (review fixes)", () => {
+  it("never opens a position while the bot is shutting down", async () => {
+    const e = engineWith([open]);
+    const alerts: string[] = [];
+    const db = openDb(":memory:");
+    let bought = 0;
+    // An executor that would buy if asked.
+    const eng = new Engine({
+      mode: "dry-run", config, db, log: createLogger({ write: () => {} }), alert: (t) => alerts.push(t), color: false,
+      chain: { mintFacts: async () => mintFacts, marketFacts: async () => open, metaplexMetadata: async () => null, mintAgeSeconds: async () => ({ seconds: 60, exact: true }), top10HolderPct: async () => 5, tokenBalance: async () => 0n },
+      executor: { simulateRoundTrip: async () => ({ ok: true, detail: "ok" }), buy: async () => (bought++, { status: "skipped", reason: "x" }) } as never,
+    });
+    const id = recordSignal(db, createRedactor([]), e.signal)!;
+    eng.stopping = true;
+    await eng.handle(e.signal, assessSignal(e.signal), id);
+    expect(bought).toBe(0);
+    expect(alerts[0]).toContain("VALIDATOR: PASS");
+    expect(alerts[0]).toContain("BUY SKIPPED: the bot is shutting down.");
+  });
+
+  it("stops waiting for a migrating pool as soon as shutdown starts", async () => {
+    const e = engineWith([migrating]);
+    e.engine.stopping = true;
+    await e.engine.handle(e.signal, assessSignal(e.signal), e.id);
+    expect(e.engine.stats.migrationRetries).toBe(0);
+  });
+
+  it("reports a sent-but-unconfirmed buy plainly instead of calling it failed", async () => {
+    const alerts: string[] = [];
+    const db = openDb(":memory:");
+    const eng = new Engine({
+      mode: "dry-run", config, db, log: createLogger({ write: () => {} }), alert: (t) => alerts.push(t), color: false,
+      chain: { mintFacts: async () => mintFacts, marketFacts: async () => open, metaplexMetadata: async () => null, mintAgeSeconds: async () => ({ seconds: 60, exact: true }), top10HolderPct: async () => 5, tokenBalance: async () => 0n },
+      executor: { simulateRoundTrip: async () => ({ ok: true, detail: "ok" }), buy: async () => ({ status: "unknown", positionId: 7, signature: "5igSomething", detail: "confirmed, but the tokens aren't visible in the wallet yet" }) } as never,
+    });
+    const e = engineWith([open]);
+    const id = recordSignal(db, createRedactor([]), e.signal)!;
+    await eng.handle(e.signal, assessSignal(e.signal), id);
+    expect(alerts[0]).toContain("BUY SENT, RESULT UNKNOWN: confirmed, but the tokens aren't visible in the wallet yet");
+    expect(alerts[0]).toContain("The bot keeps checking the wallet");
+    expect(eng.stats.unresolved).toBe(1);
+  });
+});
+
+describe("main: X is down (review fix)", () => {
+  const env = { ...FAKE_SECRETS, TELEGRAM_OWNER_CHAT_ID: OWNER, SIM_PAYER_PUBKEY: "5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9" };
+  function start(dir: string, api: ReturnType<typeof telegramApi>, lines: string[], alerts: string[], duration: string) {
+    const envPath = join(dir, ".env");
+    writeFileSync(envPath, Object.entries(env).map(([k, v]) => `${k}=${v}`).join("\n") + "\n");
+    // X answers 503 to everything: the account check fails.
+    const xDown: Route = ({ url }) => (url.hostname === "api.x.com" ? json({ title: "Service Unavailable" }, 503) : undefined);
+    const { fetch } = fakeFetch([api.route, ...solanaRpcRoutes({ byPosition: [OPEN_CURVE, null] }), xDown]);
+    return main({ argv: ["--watch", "--duration", duration, "--data-dir", dir, "--env-file", envPath], env: {}, cwd: REPO_ROOT, write: (l) => lines.push(l), alert: (t) => alerts.push(t), fetch, ocr: null, tradeBuilder: fakeBuilder().builder });
+  }
+
+  it("with nothing open, it exits with a config error as before", async () => {
+    const lines: string[] = [];
+    const code = await start(tempDir(), telegramApi(), lines, [], "5");
+    expect(code).toBe(EXIT.CONFIG);
+    expect(lines.map((l) => JSON.parse(l).event)).toContain("watch.accounts_invalid");
+  });
+
+  it("with a position open, it stays up, keeps managing it, and still answers /status", async () => {
+    const dir = tempDir();
+    // A position left open by an earlier run.
+    const db = openDb(join(dir, "dry-run.sqlite"));
+    db.prepare(
+      "INSERT INTO positions (mint, status, created_at, updated_at, simulated, venue, token_program, tokens_bought, tokens_held, cost_lamports, entry_price, peak_price, opened_at) VALUES (?, 'open', 1, 1, 1, 'pump_curve', 'token-2022', '1000', '1000', 10000000, 10000, 10000, ?)",
+    ).run(F.MINT.plain, Date.now());
+    db.close();
+    const api = telegramApi();
+    setTimeout(() => api.push(msg(200, "/status")), 150);
+    const lines: string[] = [];
+    const alerts: string[] = [];
+    const t0 = Date.now();
+    const code = await start(dir, api, lines, alerts, "0.5");
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(450); // it waited for the stop instead of exiting at once
+    expect(code).toBe(EXIT.CONFIG);
+    const events = lines.map((l) => JSON.parse(l));
+    expect(events.find((e) => e.event === "watch.x_down_positions_open")).toMatchObject({ open_positions: 1 });
+    const texts = api.sent.map((s) => s.text);
+    expect(texts.find((t) => t.startsWith("X can't be watched"))).toContain("Still managing 1 open position(s)");
+    const status = texts.find((t) => t.startsWith("Mode: dry-run"));
+    expect(status).toContain("Open positions: 1");
+    expect(status).toContain("Watching: nothing (X isn't connected)");
+    // The exit manager really ran while X was down.
+    expect(alerts.some((a) => a.startsWith("X can't be watched"))).toBe(true);
+  });
+});
