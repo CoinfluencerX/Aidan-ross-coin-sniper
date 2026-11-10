@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseEnv as parseDotenv } from "node:util";
 import { describe, expect, it } from "vitest";
-import { collectSecretValues, EnvError, parseEnv } from "../src/config/env.ts";
+import { collectSecretValues, EnvError, parseEnv, placeholderKeys } from "../src/config/env.ts";
 import { ModeError, resolveMode } from "../src/config/mode.ts";
 import { FAKE_SECRETS, REPO_ROOT } from "./helpers.ts";
 
@@ -14,6 +14,23 @@ describe("parseEnv", () => {
   it("accepts .env.example as shipped (empty values count as unset)", () => {
     const example = parseDotenv(readFileSync(join(REPO_ROOT, ".env.example"), "utf8")) as Record<string, string>;
     expect(parseEnv(example)).toMatchObject({ MODE: "dry-run", LIVE: "0" });
+  });
+
+  it("treats a line that still has its PASTE_..._HERE marker as not set, and says which", () => {
+    const example = parseDotenv(readFileSync(join(REPO_ROOT, ".env.example"), "utf8")) as Record<string, string>;
+    const env = parseEnv(example);
+    expect(env.RPC_HTTP_URL).toBeUndefined();
+    expect(env.RPC_WS_URL).toBeUndefined();
+    expect(env.TELEGRAM_BOT_TOKEN).toBeUndefined();
+    expect(placeholderKeys(example)).toEqual(["RPC_HTTP_URL", "RPC_WS_URL", "TELEGRAM_BOT_TOKEN"]);
+    expect(collectSecretValues(example)).toEqual([]);
+  });
+
+  it("uses the line once the marker is replaced with a key", () => {
+    const filled = { RPC_HTTP_URL: "https://mainnet.helius-rpc.com/?api-key=abc-123", RPC_WS_URL: "wss://mainnet.helius-rpc.com/?api-key=abc-123" };
+    expect(parseEnv(filled)).toMatchObject(filled);
+    expect(placeholderKeys(filled)).toEqual([]);
+    expect(collectSecretValues(filled)).toHaveLength(2);
   });
 
   it("ignores unrelated environment variables", () => {

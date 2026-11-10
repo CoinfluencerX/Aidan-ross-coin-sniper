@@ -15,7 +15,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { parseArgs, parseEnv as parseDotenv } from "node:util";
 import { JupiterClient } from "../src/chain/jupiter.ts";
 import { SolanaRpc } from "../src/chain/rpc.ts";
-import { parseEnv, testAccountsFromEnv, type AppEnv } from "../src/config/env.ts";
+import { parseEnv, placeholderKeys, testAccountsFromEnv, type AppEnv } from "../src/config/env.ts";
 import { loadAppConfig, withTestAccounts, type AppConfig } from "../src/config/load.ts";
 import { LIVE_TRADING_AVAILABLE } from "../src/config/mode.ts";
 import { liveReadinessProblems } from "../src/config/schemas.ts";
@@ -53,8 +53,11 @@ try {
   add("config files", "fail", (err as Error).message.slice(0, 200));
 }
 try {
-  env = parseEnv({ ...(existsSync(".env") ? parseDotenv(readFileSync(".env", "utf8")) : {}), ...process.env });
+  const rawEnv = { ...(existsSync(".env") ? parseDotenv(readFileSync(".env", "utf8")) : {}), ...process.env };
+  env = parseEnv(rawEnv);
   add(".env", existsSync(".env") ? "ok" : "warn", existsSync(".env") ? "loads" : "no .env file: copy .env.example to .env");
+  const unfilled = placeholderKeys(rawEnv);
+  if (unfilled.length > 0) add(".env markers", "warn", `still has a PASTE_..._HERE marker, so not set yet: ${unfilled.join(", ")}`);
 } catch (err) {
   add(".env", "fail", (err as Error).message);
 }

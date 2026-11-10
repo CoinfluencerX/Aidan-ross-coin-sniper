@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs, parseEnv as parseDotenv } from "node:util";
-import { collectSecretValues, EnvError, parseEnv, testAccountsFromEnv, type AppEnv } from "../config/env.ts";
+import { collectSecretValues, EnvError, parseEnv, placeholderKeys, testAccountsFromEnv, type AppEnv } from "../config/env.ts";
 import { ConfigError, loadAppConfig, withTestAccounts, type AppConfig } from "../config/load.ts";
 import { isMode, ModeError, resolveMode, type Mode } from "../config/mode.ts";
 import { liveReadinessProblems, PUSH_PLATFORMS, type AccountsConfig, type Platform } from "../config/schemas.ts";
@@ -137,6 +137,10 @@ export async function main(opts: MainOptions): Promise<number> {
   const log = createLogger({ redactor, level: env.LOG_LEVEL, write });
   // Whole env at debug level. Secret keys are redacted by name, and secret URLs by value.
   log.debug("env.loaded", { env });
+  const unfilled = placeholderKeys(rawEnv);
+  if (unfilled.length > 0) {
+    log.warn("env.unfilled", { keys: unfilled, note: "these .env lines still have a PASTE_..._HERE marker, so they count as not set" });
+  }
 
   try {
     return await run(log, env, cliMode, args, opts, existsSync(envFile) ? envFile : null, durationMs);

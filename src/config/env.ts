@@ -71,19 +71,30 @@ export type AppEnv = z.infer<typeof EnvSchema>;
 
 const KNOWN_KEYS = Object.keys(EnvSchema.shape) as (keyof AppEnv)[];
 
-/** Keep only the keys we know, and treat empty strings as unset (that's how .env.example ships). */
+/**
+ * .env.example ships some lines ready-made with a marker where your key goes, like
+ * "...?api-key=PASTE_HELIUS_KEY_HERE". A value that still has the marker counts as not filled in.
+ */
+export const isPlaceholder = (value: string): boolean => /PASTE_[A-Z0-9_]*HERE/.test(value);
+
+/** Known keys whose value still has a PASTE_..._HERE marker, so the owner can be told which lines to finish. */
+export function placeholderKeys(raw: Record<string, string | undefined>): string[] {
+  return KNOWN_KEYS.filter((k) => isPlaceholder(raw[k] ?? ""));
+}
+
+/** Keep only the keys we know. Empty values and unfilled markers count as unset (that's how .env.example ships). */
 function pickKnown(raw: Record<string, string | undefined>): Record<string, string> {
   const out: Record<string, string> = {};
   for (const key of KNOWN_KEYS) {
     const value = raw[key]?.trim();
-    if (value) out[key] = value;
+    if (value && !isPlaceholder(value)) out[key] = value;
   }
   return out;
 }
 
 /** Secret values present in the raw env, collected before validation so even invalid ones get redacted. */
 export function collectSecretValues(raw: Record<string, string | undefined>): string[] {
-  return SECRET_ENV_KEYS.map((k) => raw[k]?.trim()).filter((v): v is string => Boolean(v));
+  return SECRET_ENV_KEYS.map((k) => raw[k]?.trim()).filter((v): v is string => Boolean(v) && !isPlaceholder(v!));
 }
 
 export class EnvError extends Error {
