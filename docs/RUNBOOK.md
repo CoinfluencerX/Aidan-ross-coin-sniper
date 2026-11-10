@@ -36,7 +36,7 @@ Fill `.env` in yourself. What each key unlocks:
 | `TEST_X_ACCOUNTS` | Rehearsals in dry-run | Your own X account as `handle:user_id`. Get the number with `node scripts/x-lookup-user.ts yourhandle` |
 | `RPC_HTTP_URL`, `RPC_WS_URL` | Validator, executor, exit manager | Your Solana RPC provider. The lines ship ready for Helius: paste your key over `PASTE_HELIUS_KEY_HERE` on both |
 | `SIM_PAYER_PUBKEY` | Dry-run buys before your wallet is funded | Any public address that holds SOL |
-| `WALLET_KEYPAIR_PATH` | Live trading, and realistic dry-runs | `solana-keygen new -o ~/sniper-wallet.json`, then `chmod 600` it. Keep it outside the repo |
+| `WALLET_KEYPAIR_PATH` | Live trading, and realistic dry-runs | `node scripts/new-wallet.ts` (makes `~/sniper-wallet.json`, readable only by you, and prints the line to paste). `solana-keygen` files work too. Keep it outside the repo; there is no seed phrase, so keep one offline copy |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_OWNER_CHAT_ID` | Phone alerts, `/sell`, `/kill` | @BotFather, then `node scripts/telegram-chat-id.ts` |
 | `KICK_CLIENT_ID`, `KICK_CLIENT_SECRET` | Adin's Kick chat and title | kick.com → Settings → Developer |
 | `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `TWITCH_EVENTSUB_SECRET` | Twitch stream titles | dev.twitch.tv/console; the last one is any random string you make up |

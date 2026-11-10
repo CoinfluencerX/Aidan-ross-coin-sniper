@@ -1,5 +1,5 @@
-import { readFileSync, statSync } from "node:fs";
-import { isAbsolute, relative, resolve } from "node:path";
+import { chmodSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { web3, type Web3Module } from "../chain/sdk.ts";
 import { base58Encode } from "../extract/base58.ts";
 import type { Redactor } from "../log/redact.ts";
@@ -30,15 +30,42 @@ export function ephemeralSigner(): Signer {
   return signerFrom(web3.Keypair.generate(), true);
 }
 
+function isInside(dir: string, path: string): boolean {
+  const rel = relative(resolve(dir), resolve(path));
+  return !rel.startsWith("..") && !isAbsolute(rel);
+}
+
 /**
- * Loads the bot wallet from the file the owner created with `solana-keygen` (a JSON array of 64 bytes).
+ * Creates a brand-new bot wallet: a random keypair written to `path` in the solana-keygen format
+ * (a JSON array of 64 numbers), readable only by the current user. Returns the PUBLIC address only.
+ *
+ * It never overwrites a file (an existing wallet may hold funds), never writes inside the repo
+ * (the repo is public), and never returns or prints the private key.
+ */
+export function createWalletFile(path: string, repoRoot: string): { publicKey: string; path: string } {
+  if (!isAbsolute(path)) throw new WalletError("the wallet path must be an absolute path");
+  if (isInside(repoRoot, path)) throw new WalletError("that path is inside the repo: keep the wallet outside it (e.g. your home folder)");
+  if (existsSync(path)) throw new WalletError("a file already exists at that path: nothing was changed (a wallet is never overwritten)");
+  if (!existsSync(dirname(path))) throw new WalletError("the folder for the wallet file doesn't exist");
+  const keypair = web3.Keypair.generate();
+  try {
+    // "wx" fails if the file appeared in the meantime, so an existing wallet can't be replaced.
+    writeFileSync(path, JSON.stringify(Array.from(keypair.secretKey)), { flag: "wx", mode: 0o600 });
+    chmodSync(path, 0o600);
+  } catch {
+    throw new WalletError("couldn't write the wallet file");
+  }
+  return { publicKey: keypair.publicKey.toBase58(), path };
+}
+
+/**
+ * Loads the bot wallet from the file the owner created with `scripts/new-wallet.ts` or `solana-keygen` (a JSON array of 64 bytes).
  * Refuses a key file that sits inside the repo or that other users on the machine can read.
  * Error messages never include the file's contents.
  */
 export function loadWalletSigner(path: string, redactor: Redactor, repoRoot: string): Signer {
   if (!isAbsolute(path)) throw new WalletError("WALLET_KEYPAIR_PATH must be an absolute path");
-  const rel = relative(resolve(repoRoot), resolve(path));
-  if (!rel.startsWith("..") && !isAbsolute(rel)) throw new WalletError("the wallet key file is inside the repo: move it outside (e.g. your home folder)");
+  if (isInside(repoRoot, path)) throw new WalletError("the wallet key file is inside the repo: move it outside (e.g. your home folder)");
   let mode: number;
   try {
     mode = statSync(path).mode & 0o777;

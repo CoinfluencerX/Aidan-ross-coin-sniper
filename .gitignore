@@ -4,6 +4,7 @@
 !.env.example
 *.key
 *keypair*.json
+*wallet*.json
 id.json
 wallets/
 secrets/

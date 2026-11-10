@@ -67,6 +67,7 @@ npm start -- --watch                      # run the bot in dry-run
 node scripts/validate-mint.ts <mint> --no-sim                          # run the validator on any coin
 node scripts/simulate-trade.ts <mint> --payer <public address with SOL>   # validate + simulated buy + sell quote
 node scripts/telegram-chat-id.ts          # find your Telegram chat id
+node scripts/new-wallet.ts                # create the bot wallet (you run this; prints the public address only)
 ```
 
 ## What's left before launch
@@ -78,7 +79,7 @@ Put every secret into `.env` yourself (copy from `.env.example`). Never paste ke
 - [x] **Solana RPC** (`RPC_HTTP_URL`, `RPC_WS_URL`). Set on Nov 10: a live coin validates and a simulated buy is signed in about 0.7 s from this Mac.
 - [ ] **Guardrail numbers**: SOL per buy, max slippage, take-profit ladder, stops. The shipped file never sells.
 - [ ] **Telegram bot** and your chat id, for alerts and `/sell` `/kill`. The bot exists and its token works; the chat id is still to do (send the bot a message, then `node scripts/telegram-chat-id.ts`).
-- [ ] **Bot wallet**: `solana-keygen new -o ~/sniper-wallet.json`, kept outside the repo, funded only with what you can lose.
+- [ ] **Bot wallet**: `node scripts/new-wallet.ts` makes `~/sniper-wallet.json` (outside the repo) and prints only the public address. Fund it only with what you can lose.
 - [ ] **Server** with an https address, for 24/7 running and for Kick and Twitch.
 - [ ] **Kick and Twitch developer apps** (free).
 - [ ] **Rehearsal**: post a live pump.fun coin's address from the test account and watch the paper trade.

@@ -9,7 +9,7 @@ files=$(git diff --cached --name-only --diff-filter=ACMR)
 
 # 1. Files that must never be committed.
 bad_paths=$(printf '%s\n' "$files" \
-  | grep -E '(^|/)\.env($|\.)|(^|/)id\.json$|keypair[^/]*\.json$|^(wallets|secrets|data)/|\.(key|pem|sqlite)$' \
+  | grep -E '(^|/)\.env($|\.)|(^|/)id\.json$|keypair[^/]*\.json$|wallet[^/]*\.json$|^(wallets|secrets|data)/|\.(key|pem|sqlite)$' \
   | grep -vE '(^|/)\.env\.example$' || true)
 if [ -n "$bad_paths" ]; then
   echo "pre-commit: BLOCKED. These files must never be committed (public repo):" >&2
