@@ -2,7 +2,7 @@
 
 A Solana sniper that buys the coin Adin Ross and FaZe Banks have talked about launching for their GTA 6 roleplay server. It buys **the moment the contract address is posted from one of their official accounts**, then sells on preset % gain rules.
 
-> **Status:** Watcher done (M1): X is verified live; Kick and Twitch receivers are built and tested but need the server before a live test. `0x…` addresses from official posts raise a manual-buy alert and are never bought. No validator or trading yet. GTA 6 releases **Nov 19, 2026**. Target: launch-ready by **Nov 17**.
+> **Status:** Watcher (M1) and validator (M2) done. X is verified live; Kick and Twitch receivers are built and tested but need the server before a live test. The validator is verified against real mainnet tokens. No executor yet, so nothing can be bought. GTA 6 releases **Nov 19, 2026**. Target: launch-ready by **Nov 17**.
 
 ## Quick start
 

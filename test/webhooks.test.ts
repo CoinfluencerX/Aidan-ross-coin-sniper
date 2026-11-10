@@ -392,6 +392,8 @@ describe("main --watch with Kick configured (fake APIs, real local HTTP)", () =>
     const { EXIT, main } = await import("../src/app/main.ts");
     const { xApiRoutes } = await import("./fake-x.ts");
     const { FAKE_SECRETS, REPO_ROOT, SECRET_NEEDLES, tempDir } = await import("./helpers.ts");
+    const { solanaRpcRoutes } = await import("./fake-chain.ts");
+    const { OPEN_CURVE } = await import("./fixtures/chain.ts");
 
     const dir = tempDir();
     const envPath = join(dir, ".env");
@@ -409,6 +411,7 @@ describe("main --watch with Kick configured (fake APIs, real local HTTP)", () =>
       ({ url }) => (url.pathname === "/public/v1/public-key" ? json({ data: { public_key: kickPem } }) : undefined),
       ({ url }) => (url.pathname === "/public/v1/channels" ? json({ data: [{ broadcaster_user_id: ADIN_KICK, slug: "adinross" }] }) : undefined),
       ({ url, method }) => (url.pathname === "/public/v1/events/subscriptions" ? json({ data: [] }, method === "GET" ? 200 : 201) : undefined),
+      ...solanaRpcRoutes({ byPosition: [OPEN_CURVE, null] }),
       ...xApiRoutes({ users }),
     ]);
     const lines: string[] = [];

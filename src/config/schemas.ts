@@ -169,6 +169,8 @@ export const ValidatorSchema = z.strictObject({
     address_in_post: Core,
     cross_account_match: Level,
     warning_post_filter: Level,
+    single_address: Level,
+    post_age: Level,
     // address
     valid_pubkey: Core,
     is_mint: Core,
@@ -190,6 +192,16 @@ export const ValidatorSchema = z.strictObject({
     recent_mint_max_age_hours: z.number().positive(),
     transfer_fee_max_bps: z.number().int().min(0).max(10_000),
     warning_keywords: z.array(z.string().min(1)),
+    /** post_age: a post older than this when it reaches us fails the check. */
+    max_post_age_seconds: z.number().positive(),
+    /** cross_account_match: how far back to look for a different address from the other person. */
+    cross_account_window_hours: z.number().positive(),
+    /** name_matches_post: the token's name or symbol should contain one of these, or appear in the post. */
+    expected_name_keywords: z.array(z.string().min(1)),
+    /** holder_concentration: warn when the 10 largest holders own more than this % of supply. */
+    holder_top10_warn_pct: z.number().positive().max(100),
+    /** Slow, warn-only lookups (name, age, holders) get this long before the verdict goes out without them. */
+    advisory_budget_ms: z.number().int().positive(),
   }),
 });
 export type ValidatorConfig = z.infer<typeof ValidatorSchema>;

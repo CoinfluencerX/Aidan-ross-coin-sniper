@@ -32,7 +32,7 @@ M1  [DONE 2026-11-09] Address extraction + X watcher. Unit-test extraction again
     image, a "this is FAKE" warning post, a reply carrying a different
     address). Verify: tests pass, and the watcher logs a post from my test
     X account in dry-run.
-M2  Validator against mainnet RPC (read-only). Verify with tests on real
+M2  [DONE 2026-11-09] Validator against mainnet RPC (read-only). Verify with tests on real
     mints: a normal pump.fun token passes; a mint with freeze authority
     blocks; a Token-2022 mint with a transfer hook or permanent delegate
     blocks; a wallet address blocks.

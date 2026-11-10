@@ -12,6 +12,8 @@ checks:
   address_in_post: block           # core
   cross_account_match: block
   warning_post_filter: warn
+  single_address: block            # a post with two different addresses is ambiguous
+  post_age: warn                   # the post reached us late (see max_post_age_seconds)
   # address
   valid_pubkey: block              # core
   is_mint: block                   # core
@@ -33,3 +35,8 @@ params:
   recent_mint_max_age_hours: 24
   transfer_fee_max_bps: 100        # 1%
   warning_keywords: [fake, "not mine", "not me", scam, hacked, "don't buy", "dont buy", impersonat]
+  max_post_age_seconds: 300
+  cross_account_window_hours: 24
+  expected_name_keywords: [adin, ross, gta, banks, faze, brand, risk]
+  holder_top10_warn_pct: 30
+  advisory_budget_ms: 400          # name / age / holder lookups are warn-only and never delay the verdict longer than this

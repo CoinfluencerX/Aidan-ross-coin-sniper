@@ -10,7 +10,11 @@ import { createLogger, type Logger } from "../log/logger.ts";
 import { createRedactor } from "../log/redact.ts";
 import { audit } from "../state/audit.ts";
 import { openDb, SCHEMA_VERSION, type Db } from "../state/db.ts";
-import { formatAlert, formatEvmAlert } from "../alert/console.ts";
+import { formatEvmAlert } from "../alert/console.ts";
+import { JupiterClient, jupiterRouteCheck, SolPrice } from "../chain/jupiter.ts";
+import { SolanaRpc } from "../chain/rpc.ts";
+import type { ChainReader } from "../chain/facts.ts";
+import { Engine } from "./engine.ts";
 import { locateEvmAddress } from "../evm/locate.ts";
 import type { FetchFn } from "../extract/expand.ts";
 import { tesseractOcr, type OcrEngine } from "../extract/ocr.ts";
@@ -280,6 +284,30 @@ async function watch(
   const ocr = opts.ocr === null ? undefined : (opts.ocr ?? defaultOcr(log));
   const alert = opts.alert ?? ((text: string) => process.stderr.write(text + "\n"));
   const color = opts.alert ? false : Boolean(process.stderr.isTTY) || process.env.FORCE_COLOR !== undefined;
+  // Validator: needs an RPC endpoint. Without one, signals are still caught and alerted, just not validated.
+  const fetchOpt = opts.fetch ? { fetch: opts.fetch } : {};
+  const jupiter = new JupiterClient(fetchOpt);
+  const solPrice = new SolPrice(() => jupiter.solUsd());
+  let chain: ChainReader | undefined;
+  if (env.RPC_HTTP_URL) {
+    // Loaded only when needed: the Solana and pump.fun SDKs take a few hundred ms to load.
+    const { RpcChainReader } = await import("../chain/facts.ts");
+    chain = new RpcChainReader(new SolanaRpc({ url: env.RPC_HTTP_URL, ...fetchOpt }));
+  }
+  if (chain) solPrice.start();
+  else log.warn("validator.off", { note: "RPC_HTTP_URL isn't set: addresses are caught and alerted, but not validated" });
+  const engine = new Engine({
+    mode,
+    config,
+    db,
+    log,
+    alert,
+    color,
+    chain,
+    jupiterRoute: jupiterRouteCheck(jupiter, config.guardrails.buy.max_slippage_bps),
+    solUsd: () => solPrice.get(),
+  });
+
   // Every source (X, Kick, Twitch) feeds the same pipeline, so the rules can't differ between them.
   const pipeline: PipelineDeps = {
     accounts: config.accounts,
@@ -288,7 +316,7 @@ async function watch(
     log,
     ocr,
     fetch: opts.fetch,
-    onSignal: (s, a) => alert(formatAlert(s, a, { color, mode, now: Date.now() })),
+    onSignal: engine.onSignal,
     // 0x addresses: find the chain, then alert. Never bought.
     locateEvm: (address) =>
       locateEvmAddress(address, { rpcUrls: { ethereum: env.ETH_RPC_URL, base: env.BASE_RPC_URL }, ...(opts.fetch ? { fetch: opts.fetch } : {}) }),
@@ -325,6 +353,7 @@ async function watch(
   log.info("watch.started", {
     mode,
     paths,
+    validator: chain ? "on" : "off (no RPC_HTTP_URL)",
     webhook_sources: webhooks?.sources ?? [],
     webhook_port: webhooks?.port ?? null,
     duration_s: durationMs !== undefined ? durationMs / 1000 : null,
@@ -336,7 +365,9 @@ async function watch(
   const { failedPaths } = await watcher.run(stop);
   const everyPathFailed = failedPaths.length === paths.length && !stop.aborted;
   await webhooks?.close();
-  log.info("watch.stopped", { stats: watcher.stats, failed_paths: failedPaths, ...(webhooks ? { webhook_stats: webhooks.stats() } : {}) });
+  await engine.drain();
+  solPrice.stop();
+  log.info("watch.stopped", { stats: watcher.stats, engine: engine.stats, failed_paths: failedPaths, ...(webhooks ? { webhook_stats: webhooks.stats() } : {}) });
   audit(db, log.redactor, "shutdown", { mode, reason: everyPathFailed ? "all_paths_failed" : "stopped", stats: watcher.stats });
   return everyPathFailed ? EXIT.FATAL : EXIT.OK;
 }

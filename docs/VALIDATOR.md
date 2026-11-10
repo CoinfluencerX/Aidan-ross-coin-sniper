@@ -18,6 +18,9 @@ Anything that fails a **BLOCK** check stops the buy and sends a Telegram alert. 
 | Post is original, or a repost/quote of another allowlisted account | BLOCK | Replies and quote-tweets from strangers carry fake addresses. |
 | Address appears in the post itself (text, link, or OCR of an attached image) | BLOCK | Never take an address from replies or comments. |
 | If both Adin and Banks post, the addresses match | BLOCK on mismatch | Two different addresses means something is wrong. Halt and alert. |
+| Post carries exactly one address (`single_address`) | BLOCK | Two different addresses in one post is ambiguous. We don't guess. |
+| Account is **tier 1** in `accounts.yaml` (`tier1_source`) | BLOCK (fixed) | Tier-2 accounts only confirm. The tier is read from the config, never from the signal. |
+| Post reached us within `max_post_age_seconds` (`post_age`) | WARN | A post that arrives minutes late means the price has already moved. |
 | Post isn't a "don't buy X, it's fake" warning | WARN | Celebs often post fake addresses to warn people. A keyword filter flags "fake", "not mine" and "scam". |
 | **Hacked-account guard**: optionally buy part of the size on the first official post, and the rest only when a second source confirms the same address (the other person, or another platform) | Setting for the guardrails session | Official accounts do get hacked. Roaring Kitty's X posted a pump.fun address (RKC, −85% within the hour). Kanye's Instagram promoted a fake coin (−96%). See [research](research/past-celebrity-launches.md). |
 | **Deleted post**: if the source post disappears within N minutes, the exit manager sells | Exit trigger | Hacked or fake posts get deleted fast: RKC within an hour, ROSS in ~20 min. |
@@ -67,3 +70,16 @@ The validator does most of its work **before** the post:
 - An on-chain listener (Yellowstone gRPC or websocket) watches new pump.fun and launchpad mints. It flags candidates whose name or symbol matches keywords (`adin`, `ross`, `gta`, `banks`, `faze`, …) or whose creator is a known wallet.
 - For each candidate, we cache the mint, authorities, extensions, bonding-curve and pool accounts, and an **unsigned buy-transaction template**.
 - When the official post arrives, address extraction → cache lookup → sign → send. The candidate list never triggers a buy by itself. **Only an official post can.**
+
+## How it runs (as built)
+
+- Code: `src/validate/validator.ts`. Chain reads: `src/chain/facts.ts` (read-only RPC, plus the official pump.fun SDK to decode curve and pool accounts).
+- **Fail closed.** A check that can't get its data counts as failed. For a `block` check that means no buy.
+- Order: post checks first (no network). If the post itself is blocked, no RPC call is made. Then the mint and the market are read in parallel.
+- The slow, warn-only lookups (name, age, top holders) get `advisory_budget_ms` and then the verdict goes out without them.
+- The sell simulation is supplied by the executor: one simulated transaction that buys and then sells our size. Nothing is signed or sent.
+- `max_entry_mcap` and `max_price_multiple` only exist when the matching guardrail is set. When set, they block.
+- Every check's result is written to the `decisions` table for the signal.
+- Try it on any mint, read-only: `node scripts/validate-mint.ts <mint> --no-sim`.
+
+Verified on mainnet on 2026-11-09: a live pump.fun curve token and a graduated PumpSwap token pass; USDC blocks (freeze authority); PYUSD blocks (permanent delegate, transfer hook authority); a wallet address blocks (not a mint); the known fake ADINROSS mint blocks without a chain read.

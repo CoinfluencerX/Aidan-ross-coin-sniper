@@ -20,7 +20,9 @@ import {
   verifyWatchList,
   XWatcher,
 } from "../src/watch/x/watcher.ts";
+import { solanaRpcRoutes } from "./fake-chain.ts";
 import { fakeFetch, json, ndjsonStream, xApiRoutes } from "./fake-x.ts";
+import { OPEN_CURVE } from "./fixtures/chain.ts";
 import * as F from "./fixtures/x-posts.ts";
 import { CONFIG_DIR, FAKE_SECRETS, REPO_ROOT, SECRET_NEEDLES, tempDir } from "./helpers.ts";
 
@@ -275,7 +277,8 @@ describe("main --watch (fake X API end to end)", () => {
     const dir = tempDir();
     const lines: string[] = [];
     const alerts: string[] = [];
-    const { fetch, calls } = fakeFetch(xApiRoutes(routes));
+    // The validator is on (the fake .env has an RPC URL), so give it a fake chain: a clean mint on an open pump.fun curve.
+    const { fetch, calls } = fakeFetch([...solanaRpcRoutes({ byPosition: [OPEN_CURVE, null] }), ...xApiRoutes(routes)]);
     const code = await main({
       argv: ["--mode", "dry-run", "--watch", ...extraArgs, "--data-dir", dir, "--env-file", envFile(dir)],
       env: {},
@@ -295,16 +298,22 @@ describe("main --watch (fake X API end to end)", () => {
     expect(r.alerts).toHaveLength(1);
     expect(r.alerts[0]).toContain(F.MINT.plain);
     expect(r.alerts[0]).toContain("@Franklin_ETH1 (TEST ACCOUNT");
-    expect(r.alerts[0]).toContain("GREEN");
+    // Validated against the fake chain. Until the executor (M3) supplies the sell simulation, that one check blocks.
+    expect(r.alerts[0]).toContain("VALIDATOR: BLOCKED");
+    expect(r.alerts[0]).toContain("sell_simulation: couldn't check: no simulator available");
+    expect(r.alerts[0]).not.toMatch(/✗ (?!sell_simulation)/);
+    expect(r.alerts[0]).toContain("pump_curve");
     const names = r.events.map((e) => e.event);
-    expect(names).toEqual(expect.arrayContaining(["x.accounts.verified", "x.activity.subscriptions", "x.filtered_stream.rule", "watch.started", "x.post", "signal", "watch.stopped", "shutdown"]));
+    expect(names).toEqual(expect.arrayContaining(["x.accounts.verified", "x.activity.subscriptions", "x.filtered_stream.rule", "watch.started", "x.post", "signal", "validation", "watch.stopped", "shutdown"]));
     expect(r.events.find((e) => e.event === "watch.stopped").stats).toMatchObject({ posts: 1, duplicates: 1, signals: 1 });
     for (const needle of SECRET_NEEDLES) expect(r.text).not.toContain(needle);
 
     const db = new DatabaseSync(join(r.dir, "dry-run.sqlite"));
     expect(db.prepare("SELECT mint, account_id FROM signals").all()).toEqual([{ mint: F.MINT.plain, account_id: F.TEST }]);
     const kinds = (db.prepare("SELECT kind FROM audit_log ORDER BY id").all() as { kind: string }[]).map((k) => k.kind);
-    expect(kinds).toEqual(["boot", "watch.started", "x.post", "shutdown"]);
+    expect(kinds).toEqual(["boot", "watch.started", "x.post", "validation", "shutdown"]);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM decisions").get() as { n: number }).n).toBeGreaterThan(15);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM positions").get()).toEqual({ n: 0 });
     expect(JSON.stringify(db.prepare("SELECT * FROM audit_log").all())).not.toContain(FAKE_SECRETS.X_BEARER_TOKEN);
     db.close();
   });
