@@ -3,10 +3,12 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ChainReader, MarketFacts, MintFacts } from "../src/chain/facts.ts";
 import { SolanaRpc } from "../src/chain/rpc.ts";
+import { GuardrailsSchema } from "../src/config/schemas.ts";
 import { PROGRAMS, splToken, web3 } from "../src/chain/sdk.ts";
 import { base58Encode } from "../src/extract/base58.ts";
 import { compileTx, Executor, simulationFailure, type BuyRequest } from "../src/exec/executor.ts";
 import { LiveSender, type Sender } from "../src/exec/send.ts";
+import { JITO_MIN_TIP_LAMPORTS, JITO_TIP_ACCOUNTS, jitoTipInstruction } from "../src/exec/jito.ts";
 import { ephemeralSigner, loadWalletSigner, WalletError } from "../src/exec/wallet.ts";
 import { createLogger } from "../src/log/logger.ts";
 import { createRedactor } from "../src/log/redact.ts";
@@ -31,9 +33,9 @@ function tokenAccountBase64(amount: bigint) {
   return b.toString("base64");
 }
 
-function setup(o: { chain?: FakeChain; builder?: ReturnType<typeof fakeBuilder>; mode?: "dry-run" | "live"; sender?: Sender; simPayer?: string | undefined; maxOpen?: number; marketNow?: MarketFacts; now?: () => number } = {}) {
+function setup(o: { chain?: FakeChain; builder?: ReturnType<typeof fakeBuilder>; mode?: "dry-run" | "live"; sender?: Sender; simPayer?: string | undefined; maxOpen?: number; marketNow?: MarketFacts; now?: () => number; tipLamports?: number; simulated?: string[] } = {}) {
   const rpcCalls: string[] = [];
-  const { fetch } = fakeFetch(solanaRpcRoutes({ calls: rpcCalls, simulate: () => ({ err: null, logs: [], unitsConsumed: 81_245, accounts: [{ owner: PROGRAMS.token2022, lamports: 1, executable: false, data: [tokenAccountBase64(357_142_857_142n), "base64"] }] }), ...o.chain }));
+  const { fetch } = fakeFetch(solanaRpcRoutes({ calls: rpcCalls, simulate: (params: unknown[]) => (o.simulated?.push(params[0] as string), { err: null, logs: [], unitsConsumed: 81_245, accounts: [{ owner: PROGRAMS.token2022, lamports: 1, executable: false, data: [tokenAccountBase64(357_142_857_142n), "base64"] }] }), ...o.chain }));
   const lines: string[] = [];
   const log = createLogger({ level: "debug", write: (l) => lines.push(l) });
   const db = openDb(":memory:");
@@ -53,6 +55,7 @@ function setup(o: { chain?: FakeChain; builder?: ReturnType<typeof fakeBuilder>;
     db,
     log,
     sender: o.sender,
+    tipInstruction: o.tipLamports !== undefined ? jitoTipInstruction(o.tipLamports) : undefined,
     sleep: async () => {},
     ...(o.now ? { now: o.now } : {}),
   });
@@ -478,5 +481,104 @@ describe("live sells: an unconfirmed sale is checked against the wallet", () => 
     delete chain.accounts![WALLET_ATA];
     expect(await t.executor.sell(t.id, "all", "stop_loss")).toEqual({ status: "failed", error: "nothing left to sell" });
     expect(t.executor.position(t.id)!.status).toBe("closed");
+  });
+});
+
+describe("Jito tip", () => {
+  const payer = web3.Keypair.generate().publicKey;
+  /** Every SOL transfer in a transaction, as {from, to, lamports}. */
+  function transfers(txBase64: string) {
+    const tx = web3.VersionedTransaction.deserialize(Buffer.from(txBase64, "base64"));
+    const keys = tx.message.staticAccountKeys.map((k) => k.toBase58());
+    return tx.message.compiledInstructions
+      .filter((ix) => keys[ix.programIdIndex] === PROGRAMS.system && ix.data.length === 12 && Buffer.from(ix.data).readUInt32LE(0) === 2)
+      .map((ix) => ({ from: keys[ix.accountKeyIndexes[0]!]!, to: keys[ix.accountKeyIndexes[1]!]!, lamports: Number(Buffer.from(ix.data).readBigUInt64LE(4)) }));
+  }
+  const tips = (txBase64: string) => transfers(txBase64).filter((t) => (JITO_TIP_ACCOUNTS as readonly string[]).includes(t.to));
+  const fakeSender = () => {
+    const sent: string[] = [];
+    const sender: Sender = { send: async (tx) => (sent.push(tx), `5igTip${sent.length}`), confirm: async () => ({ status: "confirmed" }) };
+    return { sender, sent };
+  };
+  const WALLET_ATA = splToken.getAssociatedTokenAddressSync(new web3.PublicKey(F.MINT.plain), liveKey.publicKey, true, new web3.PublicKey(PROGRAMS.token2022)).toBase58();
+  const held = (amount: bigint): FakeChain => ({ accounts: { [WALLET_ATA]: { owner: PROGRAMS.token2022, lamports: 1, executable: false, data: Buffer.from(tokenAccountBase64(amount), "base64").toString("hex") } } });
+
+  it("is a plain SOL transfer of exactly the configured amount, from the payer to one of Jito's eight accounts", () => {
+    expect(new Set(JITO_TIP_ACCOUNTS).size).toBe(8);
+    for (const a of JITO_TIP_ACCOUNTS) expect(() => new web3.PublicKey(a)).not.toThrow();
+    JITO_TIP_ACCOUNTS.forEach((account, i) => {
+      const ix = jitoTipInstruction(25_000, () => i / 8)!(payer);
+      expect(ix.programId.toBase58()).toBe(PROGRAMS.system);
+      expect(ix.keys.map((k) => k.pubkey.toBase58())).toEqual([payer.toBase58(), account]);
+      expect(Buffer.from(ix.data).readBigUInt64LE(4)).toBe(25_000n);
+    });
+    // A pick at the very edge still lands on a real account.
+    expect(jitoTipInstruction(25_000, () => 1)!(payer).keys[1]!.pubkey.toBase58()).toBe(JITO_TIP_ACCOUNTS[7]);
+    expect(jitoTipInstruction(25_000, () => -1)!(payer).keys[1]!.pubkey.toBase58()).toBe(JITO_TIP_ACCOUNTS[0]);
+  });
+
+  it("is off for 0, for anything under Jito's minimum, and for nonsense", () => {
+    expect(jitoTipInstruction(0)).toBeUndefined();
+    expect(jitoTipInstruction(JITO_MIN_TIP_LAMPORTS - 1)).toBeUndefined();
+    expect(jitoTipInstruction(1.5)).toBeUndefined();
+    expect(jitoTipInstruction(Number.NaN)).toBeUndefined();
+    expect(jitoTipInstruction(-5_000)).toBeUndefined();
+    expect(jitoTipInstruction(JITO_MIN_TIP_LAMPORTS)).toBeTypeOf("function");
+  });
+
+  it("rides as the last instruction of a live buy and a live sell, paid by the wallet, once each", async () => {
+    const { sender, sent } = fakeSender();
+    const { executor, db } = setup({ mode: "live", sender, chain: held(100n), tipLamports: 40_000 });
+    const buy = await executor.buy(buyReq(db));
+    if (buy.status !== "confirmed") throw new Error("buy failed");
+    await executor.sell(buy.positionId, "all", "panic");
+    expect(sent).toHaveLength(2);
+    for (const tx of sent) {
+      expect(tips(tx)).toEqual([{ from: liveSigner.publicKey, to: expect.any(String), lamports: 40_000 }]);
+      // Last instruction, after the trade itself.
+      expect(transfers(tx).at(-1)).toEqual(tips(tx)[0]);
+    }
+  });
+
+  it("adds nothing when no tip is configured", async () => {
+    const { sender, sent } = fakeSender();
+    const { executor, db } = setup({ mode: "live", sender, chain: held(100n) });
+    const buy = await executor.buy(buyReq(db));
+    if (buy.status !== "confirmed") throw new Error("buy failed");
+    await executor.sell(buy.positionId, "all", "panic");
+    expect(sent.flatMap(tips)).toEqual([]);
+  });
+
+  it("is included in the dry-run buy simulation, so paper buys match live ones, but not in the validator's round trip", async () => {
+    const simulated: string[] = [];
+    const { executor, db } = setup({ tipLamports: 40_000, simulated });
+    await executor.simulateRoundTrip(F.MINT.plain, LAMPORTS, mintFacts, market());
+    expect(simulated).toHaveLength(1);
+    expect(tips(simulated[0]!)).toEqual([]);
+    expect((await executor.buy(buyReq(db))).status).toBe("simulated");
+    expect(simulated).toHaveLength(2);
+    expect(tips(simulated[1]!)).toEqual([{ from: PAYER, to: expect.any(String), lamports: 40_000 }]);
+  });
+
+  it("is never added to a Jupiter transaction, which arrives already built", async () => {
+    const prebuilt = Buffer.from(compileTx(PAYER, "11111111111111111111111111111111", [web3.SystemProgram.transfer({ fromPubkey: new web3.PublicKey(PAYER), toPubkey: new web3.PublicKey(PAYER), lamports: 7 })]).serialize()).toString("base64");
+    const simulated: string[] = [];
+    const b = fakeBuilder({ buy: async () => ({ instructions: [], prebuiltTx: prebuilt, expectedOut: 1n, variant: "jupiter", userTokenAccount: ATA }) });
+    const { executor, db } = setup({ tipLamports: 40_000, simulated, builder: b });
+    await executor.buy(buyReq(db, { market: market({ venue: "jupiter", isPumpToken: false }) }));
+    expect(simulated).toHaveLength(1);
+    expect(tips(simulated[0]!)).toEqual([]);
+  });
+});
+
+describe("guardrails: tip sanity", () => {
+  it("rejects a tip larger than the buy itself (a lamports typo), and accepts 0", () => {
+    const base = config.guardrails;
+    const withTip = (jito_tip_lamports: number) => GuardrailsSchema.safeParse({ ...base, buy: { ...base.buy, jito_tip_lamports } });
+    expect(withTip(0).success).toBe(true);
+    expect(withTip(Math.round(base.buy.sol_per_buy * 1e9)).success).toBe(true);
+    const tooBig = withTip(Math.round(base.buy.sol_per_buy * 1e9) + 1);
+    expect(tooBig.success).toBe(false);
+    expect(JSON.stringify(tooBig.error?.issues)).toContain("larger than sol_per_buy");
   });
 });

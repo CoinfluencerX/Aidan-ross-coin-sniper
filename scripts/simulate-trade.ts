@@ -16,6 +16,7 @@ import { SolanaRpc } from "../src/chain/rpc.ts";
 import { loadAppConfig, withTestAccounts } from "../src/config/load.ts";
 import { SdkTradeBuilder } from "../src/exec/builder.ts";
 import { Executor } from "../src/exec/executor.ts";
+import { jitoTipInstruction } from "../src/exec/jito.ts";
 import { ephemeralSigner } from "../src/exec/wallet.ts";
 import { createLogger } from "../src/log/logger.ts";
 import { openDb } from "../src/state/db.ts";
@@ -52,6 +53,8 @@ const executor = new Executor({
   guardrails,
   db,
   log,
+  // Always included here, so the simulated buy is as large as a tipped live buy would be.
+  tipInstruction: jitoTipInstruction(guardrails.buy.jito_tip_lamports),
 });
 
 const now = Date.now();

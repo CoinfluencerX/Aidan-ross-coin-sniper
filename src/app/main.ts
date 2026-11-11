@@ -584,12 +584,16 @@ async function buildExecutor(a: {
     const { LiveSender } = await import("../exec/send.ts");
     sender = new LiveSender({ rpc: a.rpc, jitoUrl: env.JITO_BLOCK_ENGINE_URL, ...(opts.fetch ? { fetch: opts.fetch } : {}) });
   }
-  const executor = new a.ExecutorClass({ mode, rpc: a.rpc, chain: a.chain, builder, signer, simPayer, guardrails: config.guardrails, db: a.db, log: a.log, sender });
+  // The tip only helps when the transaction also goes to Jito, so no Jito address means no tip.
+  const { jitoTipInstruction } = await import("../exec/jito.ts");
+  const tipInstruction = env.JITO_BLOCK_ENGINE_URL ? jitoTipInstruction(config.guardrails.buy.jito_tip_lamports) : undefined;
+  const executor = new a.ExecutorClass({ mode, rpc: a.rpc, chain: a.chain, builder, signer, simPayer, guardrails: config.guardrails, db: a.db, log: a.log, sender, tipInstruction });
   return {
     executor,
     info: {
       mode,
       can_send: sender !== undefined,
+      jito_tip_lamports: tipInstruction ? config.guardrails.buy.jito_tip_lamports : 0,
       wallet: signer.ephemeral ? "none (throwaway key, timing only)" : signer.publicKey,
       simulates_as: simPayer ?? "nobody: set WALLET_KEYPAIR_PATH or SIM_PAYER_PUBKEY, or every buy fails its simulation",
     },

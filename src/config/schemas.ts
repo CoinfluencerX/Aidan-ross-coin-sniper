@@ -106,15 +106,19 @@ const TakeProfitStep = z.strictObject({
 
 export const GuardrailsSchema = z.strictObject({
   status: z.enum(["placeholder", "set"]),
-  buy: z.strictObject({
-    sol_per_buy: z.number().positive(),
-    max_slippage_bps: z.number().int().min(0).max(10_000),
-    priority_fee_micro_lamports: z.number().int().nonnegative(),
-    jito_tip_lamports: z.number().int().nonnegative(),
-    max_entry_mcap_usd: nullablePositive,
-    max_price_multiple_vs_first_trade: nullablePositive,
-    max_open_positions: z.number().int().positive(),
-  }),
+  buy: z
+    .strictObject({
+      sol_per_buy: z.number().positive(),
+      max_slippage_bps: z.number().int().min(0).max(10_000),
+      priority_fee_micro_lamports: z.number().int().nonnegative(),
+      /** Paid to Jito on every buy and sell, in lamports (1 SOL = 1,000,000,000). 0 = no tip. */
+      jito_tip_lamports: z.number().int().nonnegative(),
+      max_entry_mcap_usd: nullablePositive,
+      max_price_multiple_vs_first_trade: nullablePositive,
+      max_open_positions: z.number().int().positive(),
+    })
+    // Not a recommendation about size: a tip larger than the trade it speeds up can only be a typo.
+    .refine((b) => b.jito_tip_lamports <= b.sol_per_buy * 1e9, { path: ["jito_tip_lamports"], message: "is larger than sol_per_buy: the tip is in lamports (1 SOL = 1,000,000,000)" }),
   confirmation: z.strictObject({
     first_signal_fraction: z.number().gt(0).max(1),
     second_source_window_seconds: z.number().int().positive(),

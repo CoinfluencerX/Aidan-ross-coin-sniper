@@ -11,7 +11,7 @@ buy:
   sol_per_buy: 0.01
   max_slippage_bps: 1500                 # 1500 bps = 15%
   priority_fee_micro_lamports: 100000
-  jito_tip_lamports: 100000              # NOT USED YET: no Jito tip is added (see docs/EXECUTOR.md)
+  jito_tip_lamports: 100000              # paid to Jito on every buy and sell when JITO_BLOCK_ENGINE_URL is set. 0 = no tip. 1 SOL = 1,000,000,000 lamports
   max_entry_mcap_usd: null               # null = no cap
   max_price_multiple_vs_first_trade: null
   max_open_positions: 1                  # one buy only

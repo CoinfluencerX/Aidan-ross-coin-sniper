@@ -67,10 +67,23 @@ Measured 2026-11-09 through Solana's **public** RPC endpoint, which is slow:
 
 Almost all of it is network round trips to the RPC node. A paid RPC close to the server should cut this several times over; measure again once `RPC_HTTP_URL` is set. The original target of under 100 ms from signal to signed transaction is **not met** and won't be without the pre-warm cache below. For scale: X took about 4.7 s to deliver the test post.
 
+## Jito tip
+
+When `JITO_BLOCK_ENGINE_URL` is set and `jito_tip_lamports` in `config/guardrails.yaml` is at least 1,000, every buy and sell built from pump.fun or PumpSwap instructions ends with a SOL transfer of that amount to one of Jito's eight tip accounts (picked at random). The signed transaction then goes to both your RPC and Jito.
+
+- The tip is part of the trade's own transaction, so it is only paid if the trade lands. It is paid whichever path lands it.
+- Dry-run adds the same instruction to the simulated buy, so paper buys are the same size and cost as live ones.
+- It is **not** added to Jupiter's prebuilt transactions or to the validator's buy-and-sell-back test.
+- No Jito address, or a tip of 0, means no tip. A tip larger than `sol_per_buy` is refused as a typo.
+- Measured on real coins on Nov 10: the largest tipped transaction (a PumpSwap buy) is 1,130 bytes of the 1,232 allowed.
+- Jito allows about one request a second per address without an API key. That is enough for one buy and a ladder of sells.
+
+The tip amount is the owner's number, like every other guardrail. Tipped sending has never run for real.
+
 ## Not built
 
 - **Pre-warm listener** (watching new pump.fun mints and caching candidates before the post). It would remove one RPC round trip. It never triggers a buy by design, so skipping it costs speed, not safety.
-- **Jito bundles.** The live sender fans the signed transaction out to the RPC and, if `JITO_BLOCK_ENGINE_URL` is set, to Jito's transaction endpoint. No tip instruction is added yet, so `jito_tip_lamports` has no effect.
+- **Jito bundles.** The bot sends one tipped transaction, not a bundle (see below).
 
 ## Try it
 

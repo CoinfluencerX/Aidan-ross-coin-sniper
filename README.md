@@ -90,7 +90,7 @@ Put every secret into `.env` yourself (copy from `.env.example`). Never paste ke
 An independent review of the safety-critical code on Nov 10 found ten issues, mostly in how a live trade's outcome was recorded. All ten are fixed and covered by tests.
 
 - **Live sending has never been run.** It's tested only against fakes. Your small live test is its first real run.
-- **No Jito tip and no pre-warm cache.** The buy goes out through the RPC (and Jito's plain endpoint if configured). See [Executor](docs/EXECUTOR.md).
+- **No pre-warm cache.** The Jito tip is built and tested but, like all live sending, has never run for real; Jupiter-routed trades carry no tip. See [Executor](docs/EXECUTOR.md).
 - **Speed:** about 0.75–0.85 s from signal to signed transaction on Solana's slow public RPC. Re-measure on your own RPC. X itself took about 4.7 s to deliver the test post.
 - **Jupiter-routed coins** (not launched on pump.fun): the sell is quoted, not simulated, before buying.
 - **`first_signal_fraction` below 1 just buys less.** Topping up on a second source isn't built.

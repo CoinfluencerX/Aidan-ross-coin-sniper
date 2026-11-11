@@ -109,7 +109,11 @@ export interface ExecutorOptions {
   log: Logger;
   /** Live mode only. Absent in dry-run, which is what makes sending impossible there. */
   sender?: Sender | undefined;
-  /** Live mode only: a tip instruction for Jito, when a tip account is known. */
+  /**
+   * A Jito tip instruction, added as the last instruction of every buy and sell (not to Jupiter's
+   * prebuilt transactions, and not to the validator's round-trip test). Dry-run includes it too, so
+   * the simulated buy is the same size and cost as the live one.
+   */
   tipInstruction?: ((payer: Web3Module.PublicKey) => Ix | undefined) | undefined;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
@@ -279,7 +283,7 @@ export class Executor {
             ? cached.built
             : await this.#o.builder.buy({ ...this.#request(req.mint, tokenProgram, venue, user), lamportsIn: req.lamportsIn });
         const blockhash = mode === "live" ? (await this.#o.rpc.getLatestBlockhash()).blockhash : PLACEHOLDER_BLOCKHASH;
-        const candidate = this.#txFor(built, user, blockhash, mode === "live");
+        const candidate = this.#txFor(built, user, blockhash, true);
         const size = txSize(candidate);
         if (size === null || size > MAX_TX_BYTES) return this.#failBuy(positionId, req.mint, `transaction too large (${size ?? "over the limit"} bytes)`);
         tx = candidate;

@@ -444,3 +444,23 @@ describe("main: X is down (review fix)", () => {
     expect(alerts.some((a) => a.startsWith("X can't be watched"))).toBe(true);
   });
 });
+
+describe("main: the Jito tip is on only when a Jito address is set", () => {
+  async function ready(extra: Record<string, string>) {
+    const dir = tempDir();
+    const envPath = join(dir, ".env");
+    const env = { ...FAKE_SECRETS, TEST_X_ACCOUNTS: TEST_X_ACCOUNTS_ENV, SIM_PAYER_PUBKEY: "5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9", ...extra };
+    writeFileSync(envPath, Object.entries(env).map(([k, v]) => `${k}=${v}`).join("\n") + "\n");
+    // X answers 503, so the run ends right after the executor reports itself.
+    const xDown: Route = ({ url }) => (url.hostname === "api.x.com" ? json({ title: "Service Unavailable" }, 503) : undefined);
+    const { fetch } = fakeFetch([...solanaRpcRoutes({ byPosition: [OPEN_CURVE, null] }), xDown]);
+    const lines: string[] = [];
+    await main({ argv: ["--watch", "--duration", "1", "--data-dir", dir, "--env-file", envPath], env: {}, cwd: REPO_ROOT, write: (l) => lines.push(l), alert: () => {}, fetch, ocr: null, tradeBuilder: fakeBuilder().builder });
+    return lines.map((l) => JSON.parse(l)).find((e) => e.event === "executor.ready");
+  }
+
+  it("reports the configured tip with a Jito address, and 0 without one", async () => {
+    expect(await ready({ JITO_BLOCK_ENGINE_URL: "https://mainnet.block-engine.jito.wtf" })).toMatchObject({ jito_tip_lamports: config.guardrails.buy.jito_tip_lamports, can_send: false });
+    expect(await ready({})).toMatchObject({ jito_tip_lamports: 0, can_send: false });
+  });
+});
