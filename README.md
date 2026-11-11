@@ -79,7 +79,7 @@ Put every secret into `.env` yourself (copy from `.env.example`). Never paste ke
 - [x] **Solana RPC** (`RPC_HTTP_URL`, `RPC_WS_URL`). Set on Nov 10: a live coin validates and a simulated buy is signed in about 0.7 s from this Mac.
 - [ ] **Guardrail numbers**: SOL per buy, max slippage, take-profit ladder, stops. The shipped file never sells.
 - [x] **Telegram bot** and your chat id, for alerts and `/sell` `/kill`. Set on Nov 10: the pre-flight check sent a test message.
-- [ ] **Bot wallet**: `node scripts/new-wallet.ts` makes `~/sniper-wallet.json` (outside the repo) and prints only the public address. Fund it only with what you can lose.
+- [x] **Bot wallet**: `node scripts/new-wallet.ts` makes `~/sniper-wallet.json` (outside the repo) and prints only the public address. Created on Nov 10 and loads; **not funded yet**. Fund it only with what you can lose.
 - [ ] **Server** with an https address, for 24/7 running and for Kick and Twitch.
 - [ ] **Kick and Twitch developer apps** (free).
 - [ ] **Rehearsal**: post a live pump.fun coin's address from the test account and watch the paper trade.
