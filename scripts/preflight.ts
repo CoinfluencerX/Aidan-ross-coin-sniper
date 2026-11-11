@@ -15,7 +15,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { parseArgs, parseEnv as parseDotenv } from "node:util";
 import { JupiterClient } from "../src/chain/jupiter.ts";
 import { SolanaRpc } from "../src/chain/rpc.ts";
-import { parseEnv, placeholderKeys, testAccountsFromEnv, type AppEnv } from "../src/config/env.ts";
+import { alertChatIds, parseEnv, placeholderKeys, testAccountsFromEnv, type AppEnv } from "../src/config/env.ts";
 import { loadAppConfig, withTestAccounts, type AppConfig } from "../src/config/load.ts";
 import { LIVE_TRADING_AVAILABLE } from "../src/config/mode.ts";
 import { liveReadinessProblems } from "../src/config/schemas.ts";
@@ -175,12 +175,19 @@ if (config && env) {
   // ---------- Telegram ----------
   if (env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_OWNER_CHAT_ID) {
     await check("Telegram", async () => {
-      const tg = new Telegram({ token: env.TELEGRAM_BOT_TOKEN!, ownerChatId: env.TELEGRAM_OWNER_CHAT_ID!, log: quiet });
+      const groups = alertChatIds(env!);
+      const tg = new Telegram({ token: env.TELEGRAM_BOT_TOKEN!, ownerChatId: env.TELEGRAM_OWNER_CHAT_ID!, alertChatIds: groups, log: quiet });
       const name = await tg.whoAmI();
       if (values.notify) {
         const sent = await tg.send("Pre-flight test message from your sniper. If you can read this, alerts work.");
         add("Telegram", sent ? "ok" : "fail", sent ? `@${name} sent you a test message` : `@${name} is valid but the message didn't send: open the bot and press Start, and check TELEGRAM_OWNER_CHAT_ID`);
       } else add("Telegram", "ok", `@${name} is valid (add --notify to send yourself a test message)`);
+      if (groups.length > 0) {
+        if (values.notify) {
+          const reached = await tg.broadcast("Test message from the sniper bot. Coin alerts will show up in this chat. Nothing to do.");
+          add("Telegram alert chats", reached === groups.length ? "ok" : "fail", reached === groups.length ? `test message sent to ${reached} chat(s)` : `only ${reached} of ${groups.length} chat(s) got the test message: add the bot to the group (as an admin, for a channel) and check TELEGRAM_ALERT_CHAT_IDS`);
+        } else add("Telegram alert chats", "ok", `${groups.length} chat(s) set (add --notify to send them a test message)`);
+      }
     });
   } else {
     add("Telegram", target === "live" ? "fail" : "warn", "not configured: alerts only reach the terminal, and there's no /sell or /kill");

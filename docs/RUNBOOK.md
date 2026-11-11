@@ -39,6 +39,7 @@ Fill `.env` in yourself. What each key unlocks:
 | `SIM_PAYER_PUBKEY` | Dry-run buys before your wallet is funded | Any public address that holds SOL |
 | `WALLET_KEYPAIR_PATH` | Live trading, and realistic dry-runs | `node scripts/new-wallet.ts` (makes `~/sniper-wallet.json`, readable only by you, and prints the line to paste). `solana-keygen` files work too. Keep it outside the repo; there is no seed phrase, so keep one offline copy |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_OWNER_CHAT_ID` | Phone alerts, `/sell`, `/kill` | @BotFather, then `node scripts/telegram-chat-id.ts` |
+| `TELEGRAM_ALERT_CHAT_IDS` | Optional friends' group: each coin alert is copied there with links for buying by hand | Add your bot to a group, send a message there, run `node scripts/telegram-chat-id.ts` |
 | `KICK_CLIENT_ID`, `KICK_CLIENT_SECRET` | Adin's Kick chat and title | kick.com → Settings → Developer |
 | `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `TWITCH_EVENTSUB_SECRET` | Twitch stream titles | dev.twitch.tv/console; the last one is any random string you make up |
 | `WEBHOOK_PUBLIC_URL`, `WEBHOOK_PORT` | Kick and Twitch (server only) | Your server's https address |

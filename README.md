@@ -59,6 +59,15 @@ Full design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - [Research: official accounts + background](docs/research/accounts-and-background.md)
 - [Watched accounts config](config/accounts.yaml)
 
+## Friends' alert group (optional)
+
+One X key can only run one bot, because X allows a single stream connection per key. To share the signal, share the alert instead: set `TELEGRAM_ALERT_CHAT_IDS` to a Telegram group or channel your bot is in.
+
+- The group gets each coin an official account posts, with the result of the bot's checks and links to buy by hand (Phantom, Jupiter, pump.fun, a chart; Uniswap for a 0x address).
+- A coin the checks blocked is sent as **DO NOT BUY**, with the reason and no links.
+- The alert goes out as soon as the checks finish, before the bot's own buy.
+- The group can't send commands, and never sees your wallet, your buy size or your trades. Rehearsal posts from your test account are not sent to it.
+
 ## Useful commands
 
 ```bash

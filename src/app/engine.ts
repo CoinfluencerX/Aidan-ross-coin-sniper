@@ -1,4 +1,5 @@
 import { formatAlert } from "../alert/console.ts";
+import { publicCoinAlert } from "../alert/public.ts";
 import type { ChainReader } from "../chain/facts.ts";
 import type { AppConfig } from "../config/load.ts";
 import type { Mode } from "../config/mode.ts";
@@ -37,6 +38,11 @@ export interface EngineOptions {
   onPositionOpened?: ((positionId: number) => void) | undefined;
   /** Short plain-text version of each alert, for Telegram. */
   notify?: ((text: string) => void) | undefined;
+  /**
+   * Sends the public version of a coin alert to the friends' group. Called as soon as the checks
+   * finish, before the bot's own buy starts, and never waited on.
+   */
+  broadcast?: ((text: string) => void) | undefined;
   /**
    * A pump.fun coin that just filled its curve has nowhere to trade for a few seconds while it
    * moves to PumpSwap. Instead of giving up, re-check this often, for this long.
@@ -143,6 +149,10 @@ export class Engine {
       warns: verdict.warns.map((o) => ({ id: o.id, detail: o.detail })),
     });
     audit(db, log.redactor, "validation", { signal_id: signalId, mint: s.mint, decision: verdict.decision, outcomes: verdict.outcomes, elapsed_ms: verdict.elapsedMs });
+
+    // The group hears about it now, not after our own buy has confirmed (which can take a minute in live mode).
+    const publicText = publicCoinAlert(s, verdict);
+    if (publicText) this.#o.broadcast?.(publicText);
 
     const extra = verdictLines(verdict);
     let executed = false;

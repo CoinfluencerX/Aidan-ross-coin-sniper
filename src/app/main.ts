@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs, parseEnv as parseDotenv } from "node:util";
-import { collectSecretValues, EnvError, parseEnv, placeholderKeys, testAccountsFromEnv, type AppEnv } from "../config/env.ts";
+import { alertChatIds, collectSecretValues, EnvError, parseEnv, placeholderKeys, testAccountsFromEnv, type AppEnv } from "../config/env.ts";
 import { ConfigError, loadAppConfig, withTestAccounts, type AppConfig } from "../config/load.ts";
 import { isMode, ModeError, resolveMode, type Mode } from "../config/mode.ts";
 import { liveReadinessProblems, PUSH_PLATFORMS, type AccountsConfig, type Platform } from "../config/schemas.ts";
@@ -11,6 +11,7 @@ import { createRedactor } from "../log/redact.ts";
 import { audit } from "../state/audit.ts";
 import { openDb, SCHEMA_VERSION, type Db } from "../state/db.ts";
 import { formatEvmAlert } from "../alert/console.ts";
+import { publicEvmAlert } from "../alert/public.ts";
 import { JupiterClient, jupiterRouteCheck, SolPrice } from "../chain/jupiter.ts";
 import { SolanaRpc } from "../chain/rpc.ts";
 import { PROGRAMS } from "../chain/programs.ts";
@@ -298,9 +299,10 @@ async function watch(
   // Telegram: optional. Alerts go out, and only /status /sell /kill /arm come in, from the owner's chat alone.
   let telegram: Telegram | undefined;
   if (env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_OWNER_CHAT_ID) {
-    telegram = new Telegram({ token: env.TELEGRAM_BOT_TOKEN, ownerChatId: env.TELEGRAM_OWNER_CHAT_ID, log, ...fetchOpt });
+    telegram = new Telegram({ token: env.TELEGRAM_BOT_TOKEN, ownerChatId: env.TELEGRAM_OWNER_CHAT_ID, alertChatIds: alertChatIds(env), log, ...fetchOpt });
     try {
       await telegram.discardBacklog();
+      if (telegram.alertChatCount > 0) log.info("telegram.alert_chats", { count: telegram.alertChatCount, note: "these chats get coin alerts with buy links; they can't send commands" });
     } catch (err) {
       log.warn("telegram.unavailable", { error: (err as Error).message });
       telegram = undefined;
@@ -432,6 +434,7 @@ async function watch(
     chain,
     executor,
     notify: (text) => void telegram?.send(text),
+    broadcast: (text) => void telegram?.broadcast(text),
     jupiterRoute: jupiterRouteCheck(jupiter, config.guardrails.buy.max_slippage_bps),
     solUsd: () => solPrice.get(),
   });
@@ -455,6 +458,8 @@ async function watch(
     onEvm: (s, a) => {
       alert(formatEvmAlert(s, a, { color, mode, now: Date.now() }));
       void telegram?.send(evmSummary(s, a));
+      const publicText = publicEvmAlert(s, a);
+      if (publicText) void telegram?.broadcast(publicText);
     },
   };
   const watcher = new XWatcher({

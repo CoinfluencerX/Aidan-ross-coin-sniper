@@ -65,6 +65,15 @@ export const EnvSchema = z.object({
   WEBHOOK_PORT: z.string().regex(/^\d{2,5}$/).default("8787"),
   TELEGRAM_BOT_TOKEN: optionalString,
   TELEGRAM_OWNER_CHAT_ID: optionalString,
+  /**
+   * Optional. Extra chats (a group or channel your bot is in) that get a copy of each coin alert,
+   * with links for buying by hand. Comma-separated chat ids. They get alerts only: no commands,
+   * and nothing about your wallet or trades.
+   */
+  TELEGRAM_ALERT_CHAT_IDS: z
+    .string()
+    .regex(/^-?\d{1,20}(\s*,\s*-?\d{1,20})*$/, "must be chat ids separated by commas, e.g. -1001234567890")
+    .optional(),
 });
 
 export type AppEnv = z.infer<typeof EnvSchema>;
@@ -118,4 +127,11 @@ export function testAccountsFromEnv(env: Pick<AppEnv, "TEST_X_ACCOUNTS">): { han
     const [handle, user_id] = pair.trim().split(":") as [string, string];
     return { handle, user_id };
   });
+}
+
+/** Chat ids from TELEGRAM_ALERT_CHAT_IDS, without duplicates and without the owner's own chat. */
+export function alertChatIds(env: Pick<AppEnv, "TELEGRAM_ALERT_CHAT_IDS" | "TELEGRAM_OWNER_CHAT_ID">): string[] {
+  if (!env.TELEGRAM_ALERT_CHAT_IDS) return [];
+  const owner = env.TELEGRAM_OWNER_CHAT_ID?.trim();
+  return [...new Set(env.TELEGRAM_ALERT_CHAT_IDS.split(",").map((id) => id.trim()))].filter((id) => id && id !== owner);
 }
