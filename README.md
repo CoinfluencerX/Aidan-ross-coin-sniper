@@ -59,6 +59,12 @@ Full design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - [Research: official accounts + background](docs/research/accounts-and-background.md)
 - [Watched accounts config](config/accounts.yaml)
 
+## Money in, money out
+
+- **In:** send SOL (on the Solana network) to the bot wallet's public address, from Phantom or an exchange. `node scripts/preflight.ts` shows the address and what it holds.
+- **Selling** is the bot's job: it sells the coin back to SOL by the rules in `config/guardrails.yaml`, and the SOL stays in the bot wallet.
+- **Out:** `node scripts/withdraw.ts <your address> --sol <amount>` previews a transfer and sends nothing. Add `--send` and it asks you to type the last four characters of the destination before it moves anything. It refuses addresses that aren't wallets, and refuses `--all` while the wallet still holds coins. The bot itself never withdraws.
+
 ## Friends' alert group (optional)
 
 One X key can only run one bot, because X allows a single stream connection per key. To share the signal, share the alert instead: set `TELEGRAM_ALERT_CHAT_IDS` to a Telegram group or channel your bot is in.
@@ -77,6 +83,7 @@ node scripts/validate-mint.ts <mint> --no-sim                          # run the
 node scripts/simulate-trade.ts <mint> --payer <public address with SOL>   # validate + simulated buy + sell quote
 node scripts/telegram-chat-id.ts          # find your Telegram chat id
 node scripts/new-wallet.ts                # create the bot wallet (you run this; prints the public address only)
+node scripts/withdraw.ts <address> --sol 0.5        # preview moving SOL out of the bot wallet; add --send to do it
 ```
 
 ## What's left before launch

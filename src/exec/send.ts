@@ -2,9 +2,11 @@ import type { SolanaRpc } from "../chain/rpc.ts";
 import type { FetchFn } from "../extract/expand.ts";
 
 /**
- * The ONLY code in this repo that puts a transaction on chain. It is constructed only in live
- * mode (src/app/main.ts), and live mode needs --mode live, MODE=live, LIVE=1, real guardrails,
- * a wallet, Telegram, and the LIVE_TRADING_AVAILABLE switch in src/config/mode.ts.
+ * The ONLY code in this repo that puts a transaction on chain. It is constructed in two places:
+ *  - by the bot, only in live mode (src/app/main.ts), which needs --mode live, MODE=live, LIVE=1,
+ *    real guardrails, a wallet, Telegram, and the LIVE_TRADING_AVAILABLE switch in src/config/mode.ts;
+ *  - by the owner-run withdraw command (src/app/withdraw-cli.ts), only after a person at a
+ *    terminal has typed a confirmation.
  */
 
 export type ConfirmStatus = "confirmed" | "failed" | "expired";

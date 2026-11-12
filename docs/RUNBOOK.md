@@ -138,6 +138,22 @@ Starting in live mode also removes the bot's X subscription for the test account
 
 Telegram: `/status`, `/sell`, `/sell 3`, `/kill` (stop buying), `/arm`, `/help`.
 
+## Taking money out
+
+The bot sells coins back to SOL by your guardrails and leaves that SOL in the bot wallet. Moving it to your own wallet is a separate step that only you can do:
+
+```bash
+node scripts/withdraw.ts <your address> --sol 0.5          # preview: reads the chain, sends nothing
+node scripts/withdraw.ts <your address> --sol 0.5 --send   # asks for the last 4 characters, then sends
+node scripts/withdraw.ts --all --send                      # everything, to WITHDRAW_ADDRESS from .env
+```
+
+- Always run the preview first and read both addresses.
+- `--send` only works in a terminal with a person typing. A script or a pipe can't confirm it.
+- It won't send to a token account, a coin or a program, and won't leave an amount too small for the network to accept.
+- `--all` is refused while the wallet holds coins, because selling them needs SOL for fees.
+- If it says the transfer isn't confirmed, check the link it prints before running it again.
+
 ## 7. Stopping
 
 - **Stop buying, keep managing positions:** `/kill`.

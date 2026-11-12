@@ -33,6 +33,11 @@ export const EnvSchema = z.object({
   GRPC_TOKEN: optionalString,
   JITO_BLOCK_ENGINE_URL: optionalUrl,
   WALLET_KEYPAIR_PATH: optionalString,
+  /**
+   * Optional. Your own wallet address (Phantom, Ledger...) that scripts/withdraw.ts sends to when
+   * you don't give one on the command line. A public address, not a secret. The bot never uses it.
+   */
+  WITHDRAW_ADDRESS: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/, "must be a base58 Solana address").optional(),
 
   /**
    * Dry-run only. A public address that holds SOL, used as the trader in simulations before the
